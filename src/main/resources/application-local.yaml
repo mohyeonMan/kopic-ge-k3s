@@ -1,0 +1,12 @@
+spring:
+  devtools:
+    restart:
+      enabled: true
+    livereload:
+      enabled: true
+      
+  rabbitmq:
+    host: localhost
+    port: 5672
+    username: kopic
+    password: kopic123

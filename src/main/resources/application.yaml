@@ -1,3 +1,5 @@
 spring:
   application:
     name: kopic-ge
+  profiles:
+    default: local
