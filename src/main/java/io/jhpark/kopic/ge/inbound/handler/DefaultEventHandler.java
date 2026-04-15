@@ -17,28 +17,29 @@ public class DefaultEventHandler {
 	private final RoomService roomService;
 	private final NodeProperties nodeProperties;
 
-	public void handleJoin(String roomId, String userId, JsonNode payload) {
+	public void handleJoin(String roomId, String sessionId, JsonNode payload) {
 		String nickname = textValue(payload, "nickname");
 		if (nickname == null || nickname.isBlank()) {
-			log.warn("room join ignored missing nickname. roomId={}, userId={}", roomId, userId);
+			log.warn("room join ignored missing nickname. roomId={}, sessionId={}", roomId, sessionId);
 			return;
 		}
 		roomService.join(
 			roomId,
-			userId,
+			sessionId,
 			nickname,
+			textValue(payload, "wsNodeId", nodeProperties.nodeId()),
 			textValue(payload, "ownerEngineId", nodeProperties.nodeId()),
 			textValue(payload, "roomType", "PRIVATE"),
 			intValue(payload, "capacity", DEFAULT_CAPACITY)
 		);
 	}
 
-	public void handleLeave(String roomId, String userId) {
-		roomService.leave(roomId, userId);
+	public void handleLeave(String roomId, String sessionId) {
+		roomService.leave(roomId, sessionId);
 	}
 
-	public void handleSnapshot(String roomId, String userId, String requestId) {
-		roomService.snapshot(roomId, userId, requestId);
+	public void handleSnapshot(String roomId, String sessionId, String requestId) {
+		roomService.snapshot(roomId, sessionId, requestId);
 	}
 
 	private String textValue(JsonNode payload, String fieldName) {

@@ -31,7 +31,7 @@ public class DefaultRoomService implements RoomService {
 		String roomId,
 		String ownerEngineId,
 		String roomType,
-		String hostUserId,
+		String hostSessionId,
 		int capacity
 	) {
 		Optional<RoomSnapshot> existing = findRoom(roomId);
@@ -46,7 +46,7 @@ public class DefaultRoomService implements RoomService {
 			new LinkedHashMap<>(),
 			"LOBBY",
 			Instant.now(),
-			hostUserId,
+			hostSessionId,
 			ownerEngineId,
 			1L,
 			normalizeCapacity(capacity)
@@ -60,36 +60,36 @@ public class DefaultRoomService implements RoomService {
 	@Override
 	public Optional<RoomSnapshot> findRoom(String roomId) {
 		return sessionStore.find(roomId)
-			.map(RoomSession::room)
+			.map(RoomSession::getRoom)
 			.map(RoomSnapshot::from);
 	}
 
 	@Override
-	public boolean canJoin(String roomId, String userId) {
+	public boolean canJoin(String roomId, String sessionId) {
 		return sessionStore.find(roomId)
-			.map(RoomSession::room)
-			.map(room -> room.getParticipants().containsKey(userId)
+			.map(RoomSession::getRoom)
+			.map(room -> room.getParticipants().containsKey(sessionId)
 				|| room.getParticipants().size() < room.getCapacity())
 			.orElse(false);
 	}
 
 	@Override
-	public void join(String roomId, String userId, String nickname, String ownerEngineId, String roomType, int capacity) {
+	public void join(String roomId, String sessionId, String nickname, String wsNodeId, String ownerEngineId, String roomType, int capacity) {
 		if (nickname == null || nickname.isBlank()) {
 			throw new IllegalArgumentException("nickname must not be blank");
 		}
-		bootstrapRoom(roomId, ownerEngineId, roomType, userId, capacity);
-		submit(roomId, joinAction(userId, nickname));
+		bootstrapRoom(roomId, ownerEngineId, roomType, sessionId, capacity);
+		submit(roomId, joinAction(sessionId, nickname, wsNodeId));
 	}
 
 	@Override
-	public void leave(String roomId, String userId) {
-		submit(roomId, leaveAction(userId));
+	public void leave(String roomId, String sessionId) {
+		submit(roomId, leaveAction(sessionId));
 	}
 
 	@Override
-	public void snapshot(String roomId, String userId, String requestId) {
-		submit(roomId, snapshotAction(userId, requestId));
+	public void snapshot(String roomId, String sessionId, String requestId) {
+		submit(roomId, snapshotAction(sessionId, requestId));
 	}
 
 	@Override
@@ -115,36 +115,36 @@ public class DefaultRoomService implements RoomService {
 		return capacity <= 0 ? DEFAULT_CAPACITY : capacity;
 	}
 
-	private RoomAction joinAction(String userId, String nickname) {
+	private RoomAction joinAction(String sessionId, String nickname, String wsNodeId) {
 		return ctx -> {
 			Room room = ctx.room();
-			if (room.getParticipants().containsKey(userId)) {
+			if (room.getParticipants().containsKey(sessionId)) {
 				return;
 			}
 			if (room.getParticipants().size() >= room.getCapacity()) {
 				throw new IllegalStateException("room is full");
 			}
 
-			room.getParticipants().put(userId, new Participant(userId, nickname));
-			if (room.getHostUserId() == null || room.getHostUserId().isBlank()) {
-				room.setHostUserId(userId);
+			room.getParticipants().put(sessionId, new Participant(wsNodeId, sessionId, nickname));
+			if (room.getHostSessionId() == null || room.getHostSessionId().isBlank()) {
+				room.setHostSessionId(sessionId);
 			}
 			room.increaseVersion();
-			log.info("participant joined room. roomId={}, userId={}, participantCount={}",
-				room.getRoomId(), userId, room.getParticipants().size());
+			log.info("participant joined room. roomId={}, sessionId={}, participantCount={}",
+				room.getRoomId(), sessionId, room.getParticipants().size());
 		};
 	}
 
-	private RoomAction leaveAction(String userId) {
+	private RoomAction leaveAction(String sessionId) {
 		return ctx -> {
 			Room room = ctx.room();
-			Participant removed = room.getParticipants().remove(userId);
+			Participant removed = room.getParticipants().remove(sessionId);
 			if (removed == null) {
 				return;
 			}
 
-			if (userId.equals(room.getHostUserId())) {
-				room.setHostUserId(room.getParticipants().keySet().stream().findFirst().orElse(null));
+			if (sessionId.equals(room.getHostSessionId())) {
+				room.setHostSessionId(room.getParticipants().keySet().stream().findFirst().orElse(null));
 			}
 			room.increaseVersion();
 
@@ -155,22 +155,22 @@ public class DefaultRoomService implements RoomService {
 				return;
 			}
 
-			log.info("participant left room. roomId={}, userId={}, participantCount={}",
-				room.getRoomId(), userId, room.getParticipants().size());
+			log.info("participant left room. roomId={}, sessionId={}, participantCount={}",
+				room.getRoomId(), sessionId, room.getParticipants().size());
 		};
 	}
 
-	private RoomAction snapshotAction(String userId, String requestId) {
+	private RoomAction snapshotAction(String sessionId, String requestId) {
 		return ctx -> {
 			Room room = ctx.room();
-			if (!room.getParticipants().containsKey(userId)) {
-				log.info("snapshot ignored for non-participant. roomId={}, userId={}",
-					room.getRoomId(), userId);
+			if (!room.getParticipants().containsKey(sessionId)) {
+				log.info("snapshot ignored for non-participant. roomId={}, sessionId={}",
+					room.getRoomId(), sessionId);
 				return;
 			}
-			log.info("room snapshot. roomId={}, userId={}, requestId={}, snapshot={}",
+			log.info("room snapshot. roomId={}, sessionId={}, requestId={}, snapshot={}",
 				room.getRoomId(),
-				userId,
+				sessionId,
 				requestId,
 				commonMapper.write(RoomSnapshot.from(room)));
 		};

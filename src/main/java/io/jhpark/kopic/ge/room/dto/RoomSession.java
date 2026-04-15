@@ -6,6 +6,9 @@ import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import lombok.Getter;
+
+@Getter
 public final class RoomSession {
 
 	private final Room room;
@@ -15,18 +18,6 @@ public final class RoomSession {
 
 	public RoomSession(Room room) {
 		this.room = Objects.requireNonNull(room, "room");
-	}
-
-	public String roomId() {
-		return room.getRoomId();
-	}
-
-	public Room room() {
-		return room;
-	}
-
-	public Instant lastTouchedAt() {
-		return lastTouchedAt;
 	}
 
 	public void touch(Instant touchedAt) {

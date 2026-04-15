@@ -48,7 +48,7 @@ public final class DefaultRoomRunner implements RoomRunner {
 			action.run(new DefaultRoomContext(session, roomService, scheduler));
 			session.touch(Instant.now());
 		} catch (Throwable throwable) {
-			log.error("room action failed. roomId={}", session.roomId(), throwable);
+			log.error("room action failed. roomId={}", session.getRoom().getRoomId(), throwable);
 		}
 	}
 

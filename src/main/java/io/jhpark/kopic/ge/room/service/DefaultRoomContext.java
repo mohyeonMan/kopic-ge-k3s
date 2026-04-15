@@ -26,12 +26,12 @@ final class DefaultRoomContext implements RoomContext {
 
 	@Override
 	public Room room() {
-		return session.room();
+		return session.getRoom();
 	}
 
 	@Override
 	public String roomId() {
-		return session.roomId();
+		return session.getRoom().getRoomId();
 	}
 
 	@Override

@@ -17,7 +17,7 @@ public class Room {
 	private final Map<String, Participant> participants;
 	private String roomState;
 	private final Instant createdAt;
-	private String hostUserId;
+	private String hostSessionId;
 	private final String ownerEngineId;
 	private long version;
 	private final int capacity;

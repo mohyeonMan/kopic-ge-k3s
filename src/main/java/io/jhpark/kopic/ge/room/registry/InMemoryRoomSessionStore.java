@@ -18,7 +18,7 @@ public class InMemoryRoomSessionStore implements RoomSessionStore {
 
 	@Override
 	public void put(RoomSession session) {
-		sessions.put(session.roomId(), session);
+		sessions.put(session.getRoom().getRoomId(), session);
 	}
 
 	@Override
