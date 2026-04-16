@@ -28,26 +28,18 @@ public final class DefaultRoomRunner implements RoomRunner {
 		this.scheduler = scheduler;
 	}
 
-	
-
 	@Override
-	public RoomSubmitResult submit(String roomId, RoomJob job, WsSessionMeta meta) {
+	public RoomSubmitResult submit(String roomId, RoomJob job) {
 		if (isBlank(roomId)) {
 			return RoomSubmitResult.rejected(
 				RoomSubmitResult.Reason.INVALID_REQUEST,
-				"roomId is required",
-				meta.sessionId(),
-				meta.wsNodeId(),
-				null
+				"roomId is required"
 			);
 		}
 		if (job == null) {
 			return RoomSubmitResult.rejected(
 				RoomSubmitResult.Reason.INVALID_REQUEST,
-				"job is required",
-				meta.sessionId(),
-				meta.wsNodeId(),
-				null
+				"job is required"
 			);
 		}
 
@@ -55,10 +47,7 @@ public final class DefaultRoomRunner implements RoomRunner {
 		if (session == null) {
 			return RoomSubmitResult.rejected(
 				RoomSubmitResult.Reason.ROOM_NOT_FOUND,
-				"room not found: " + roomId,
-				meta.sessionId(),
-				meta.wsNodeId(),
-				null
+				"room not found: " + roomId
 			);
 		}
 
@@ -68,10 +57,7 @@ public final class DefaultRoomRunner implements RoomRunner {
 				: RoomSubmitResult.Reason.ACTOR_INACTIVE;
 			return RoomSubmitResult.rejected(
 				reason,
-				"room mailbox is full or inactive. roomId=" + roomId,
-				meta.sessionId(),
-				meta.wsNodeId(),
-				null
+				"room mailbox is full or inactive. roomId=" + roomId
 			);
 		}
 		schedule(session);
@@ -140,7 +126,7 @@ public final class DefaultRoomRunner implements RoomRunner {
 			return;
 		}
 
-		if (submit(roomId, nextJob, new WsSessionMeta(null, null)) instanceof RoomSubmitResult.Rejected rejected) {
+		if (submit(roomId, nextJob) instanceof RoomSubmitResult.Rejected rejected) {
 			log.warn("follow-up room job rejected. roomId={}, reason={}, message={}",
 				roomId,
 				rejected.reason(),

@@ -1,0 +1,106 @@
+package io.jhpark.kopic.ge.room.service;
+
+import io.jhpark.kopic.ge.common.dto.KopicEnvelope;
+import io.jhpark.kopic.ge.common.util.CommonMapper;
+import io.jhpark.kopic.ge.outbound.dto.GeEvent;
+import io.jhpark.kopic.ge.room.dto.Participant;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.Objects;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Component;
+
+@Slf4j
+@Component
+@RequiredArgsConstructor
+public class DefaultRoomJobFactory implements RoomJobFactory {
+
+	private static final String CLOSE_IF_EMPTY_TIMER_KEY = "close-if-empty";
+	private static final Duration CLOSE_IF_EMPTY_DELAY = Duration.ofSeconds(30);
+
+	private final CommonMapper commonMapper;
+	private final OutboundBroadcaster roomBroadcaster;
+
+	@Override
+	public RoomJob join(String sessionId, String nickname, String wsNodeId) {
+		return new RoomJob(
+			room -> {
+				if (room.getParticipants().containsKey(sessionId)) {
+					return RoomJob.FollowUpResult.none();
+				}
+				room.getParticipants().put(sessionId, new Participant(wsNodeId, sessionId, nickname));
+
+				RoomSnapshot snapshot = RoomSnapshot.from(room);
+				for (Participant participant : room.getParticipants().values()) {
+					if (!Objects.equals(participant.sessionId(), sessionId)) {
+						sendToParticipant(participant, 2100, snapshot);
+					}
+				}
+				return RoomJob.FollowUpResult.cancelTimer(CLOSE_IF_EMPTY_TIMER_KEY);
+			}
+		);
+	}
+
+	@Override
+	public RoomJob leave(String sessionId) {
+		return new RoomJob(
+			room -> {
+				Participant removed = room.getParticipants().remove(sessionId);
+				if (removed == null) {
+					return RoomJob.FollowUpResult.none();
+				}
+				RoomSnapshot snapshot = RoomSnapshot.from(room);
+				for (Participant participant : room.getParticipants().values()) {
+					sendToParticipant(participant, 2101, snapshot);
+				}
+				if (room.getParticipants().isEmpty()) {
+					return RoomJob.FollowUpResult.followUp(
+						closeIfEmpty(),
+						CLOSE_IF_EMPTY_DELAY,
+						CLOSE_IF_EMPTY_TIMER_KEY
+					);
+				}
+				return RoomJob.FollowUpResult.none();
+			}
+		);
+	}
+
+	@Override
+	public RoomJob snapshot(String sessionId, String requestId) {
+		return new RoomJob(
+			room -> {
+				log.info("snapshot requested. roomId={}, sessionId={}, requestId={}",
+					room.getRoomId(), sessionId, requestId);
+				Participant participant = room.getParticipants().get(sessionId);
+				if (participant == null) {
+					return RoomJob.FollowUpResult.none();
+				}
+				sendToParticipant(participant, 2102, RoomSnapshot.from(room));
+				return RoomJob.FollowUpResult.none();
+			}
+		);
+	}
+
+	@Override
+	public RoomJob closeIfEmpty() {
+		return new RoomJob(
+			room -> RoomJob.FollowUpResult.requestCloseIfEmpty()
+		);
+	}
+
+	private void sendToParticipant(Participant participant, int eventCode, Object payload) {
+		
+		String payloadString = commonMapper.write(payload);
+		
+		roomBroadcaster.send(
+			participant.wsNodeId(),
+			new GeEvent(
+				participant.sessionId(),
+				new KopicEnvelope(eventCode, payloadString),
+				Instant.now().toString()
+			)
+		);
+	}
+
+}

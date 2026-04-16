@@ -8,6 +8,7 @@ import io.jhpark.kopic.ge.inbound.dto.WsEvent;
 import io.jhpark.kopic.ge.outbound.dto.GeEvent;
 import io.jhpark.kopic.ge.room.service.OutboundBroadcaster;
 import io.jhpark.kopic.ge.room.service.RoomService;
+import io.jhpark.kopic.ge.room.service.RoomSubmitResult;
 import java.time.Instant;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
@@ -65,12 +66,13 @@ public class DefaultEventHandler {
 		String roomId = eventMapper.text(payload, "roomId");
 		String nickname = eventMapper.text(payload, "nickname");
 
-		roomService.join(
+		RoomSubmitResult result = roomService.join(
 			roomId,
 			event.senderSessionId(),
 			nickname,
 			event.wsNodeId()
 		);
+		emitRejectedIfNeeded(event, result);
 	}
 
 	private void handleLeave(WsEvent event) {
@@ -81,7 +83,8 @@ public class DefaultEventHandler {
 
 		String roomId = eventMapper.text(payload, "roomId");
 
-		roomService.leave(roomId, event.senderSessionId(), event.wsNodeId());
+		RoomSubmitResult result = roomService.leave(roomId, event.senderSessionId(), event.wsNodeId());
+		emitRejectedIfNeeded(event, result);
 	}
 
 	private void handleSnapshot(WsEvent event) {
@@ -93,11 +96,24 @@ public class DefaultEventHandler {
 		String roomId = eventMapper.text(payload, "roomId");
 		String requestId = eventMapper.text(payload, "requestId");
 
-		roomService.snapshot(
+		RoomSubmitResult result = roomService.snapshot(
 			roomId,
 			event.senderSessionId(),
 			requestId,
 			event.wsNodeId()
+		);
+		emitRejectedIfNeeded(event, result);
+	}
+
+	private void emitRejectedIfNeeded(WsEvent event, RoomSubmitResult result) {
+		if (!(result instanceof RoomSubmitResult.Rejected rejected)) {
+			return;
+		}
+		emitRejected(
+			event.senderSessionId(),
+			event.wsNodeId(),
+			rejected.reason().name(),
+			rejected.message()
 		);
 	}
 

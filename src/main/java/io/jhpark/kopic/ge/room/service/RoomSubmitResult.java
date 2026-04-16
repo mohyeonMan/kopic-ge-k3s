@@ -7,10 +7,7 @@ public sealed interface RoomSubmitResult
 
 	record Rejected(
 		Reason reason,
-		String message,
-		String sessionId,
-		String wsNodeId,
-		String requestId
+		String message
 	) implements RoomSubmitResult {}
 
 	enum Reason {
@@ -26,11 +23,8 @@ public sealed interface RoomSubmitResult
 
 	static RoomSubmitResult rejected(
 		Reason reason,
-		String message,
-		String sessionId,
-		String wsNodeId,
-		String requestId
+		String message
 	) {
-		return new Rejected(reason, message, sessionId, wsNodeId, requestId);
+		return new Rejected(reason, message);
 	}
 }
