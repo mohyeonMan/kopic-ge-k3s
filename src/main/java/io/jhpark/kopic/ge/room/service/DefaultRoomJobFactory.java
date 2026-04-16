@@ -6,6 +6,7 @@ import io.jhpark.kopic.ge.outbound.dto.GeEvent;
 import io.jhpark.kopic.ge.room.dto.Participant;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Map;
 import java.util.Objects;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -86,6 +87,90 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	public RoomJob closeIfEmpty() {
 		return new RoomJob(
 			room -> RoomJob.FollowUpResult.requestCloseIfEmpty()
+		);
+	}
+
+	@Override
+	public RoomJob updateGameSettings(String requestedSessionId, Map<String, Object> settings) {
+		return notImplemented("updateGameSettings");
+	}
+
+	@Override
+	public RoomJob gameStart(String requestedSessionId) {
+		return notImplemented("gameStart");
+	}
+
+	@Override
+	public RoomJob startRound(int roundNo) {
+		return notImplemented("startRound");
+	}
+
+	@Override
+	public RoomJob startWordChoiceTurn(int roundNo, int turnCursor) {
+		return notImplemented("startWordChoiceTurn");
+	}
+
+	@Override
+	public RoomJob openWordChoiceWindow(String expectedTurnId) {
+		return notImplemented("openWordChoiceWindow");
+	}
+
+	@Override
+	public RoomJob explicitWordChoice(String sessionId, int choiceIndex) {
+		return notImplemented("explicitWordChoice");
+	}
+
+	@Override
+	public RoomJob wordChoiceTimeout(String expectedTurnId) {
+		return notImplemented("wordChoiceTimeout");
+	}
+
+	@Override
+	public RoomJob drawingTimeout(String expectedTurnId) {
+		return notImplemented("drawingTimeout");
+	}
+
+	@Override
+	public RoomJob turnEnd(String expectedTurnId, String endReason) {
+		return notImplemented("turnEnd");
+	}
+
+	@Override
+	public RoomJob roundEnd(int expectedRoundNo) {
+		return notImplemented("roundEnd");
+	}
+
+	@Override
+	public RoomJob gameEnd() {
+		return notImplemented("gameEnd");
+	}
+
+	@Override
+	public RoomJob resultViewEnd() {
+		return notImplemented("resultViewEnd");
+	}
+
+	@Override
+	public RoomJob drawStroke(String sessionId, String expectedTurnId, Map<String, Object> stroke) {
+		return notImplemented("drawStroke");
+	}
+
+	@Override
+	public RoomJob drawClear(String sessionId, String expectedTurnId) {
+		return notImplemented("drawClear");
+	}
+
+	@Override
+	public RoomJob guessSubmit(String sessionId, String expectedTurnId, String text) {
+		return notImplemented("guessSubmit");
+	}
+
+	private RoomJob notImplemented(String jobName) {
+		return new RoomJob(
+			room -> {
+				log.warn("room job not implemented yet. job={}, roomId={}", jobName, room.getRoomId());
+				return RoomJob.FollowUpResult.none();
+			}
 		);
 	}
 
