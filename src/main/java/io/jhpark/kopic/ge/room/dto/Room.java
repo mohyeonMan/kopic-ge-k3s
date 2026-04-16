@@ -2,25 +2,23 @@ package io.jhpark.kopic.ge.room.dto;
 
 import java.time.Instant;
 import java.util.Map;
-import lombok.AllArgsConstructor;
 import lombok.Getter;
-import lombok.Setter;
+import java.util.Objects;
+import java.util.concurrent.ConcurrentHashMap;
 
 @Getter
-@Setter
-@AllArgsConstructor
-public class Room {
+public final class Room {
 
 	private final String roomId;
-	private String roomCode;
-	private String roomType;
-	private final Map<String, Participant> participants;
-	private String roomState;
+	private final Map<String, Participant> participants = new ConcurrentHashMap<>();
 	private final Instant createdAt;
-	private String hostSessionId;
-	private final String ownerEngineId;
 	private long version;
-	private final int capacity;
+
+	public Room(String roomId) {
+		this.roomId = Objects.requireNonNull(roomId, "roomId");
+		this.createdAt = Instant.now();
+		this.version = 1L;
+	}
 
 	public void increaseVersion() {
 		version += 1;

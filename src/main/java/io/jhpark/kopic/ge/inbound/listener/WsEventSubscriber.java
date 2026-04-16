@@ -1,5 +1,6 @@
 package io.jhpark.kopic.ge.inbound.listener;
 
+import io.jhpark.kopic.ge.inbound.handler.DefaultEventHandler;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.stereotype.Component;
 import io.jhpark.kopic.ge.common.util.CommonMapper;
@@ -13,10 +14,12 @@ import lombok.extern.slf4j.Slf4j;
 public class WsEventSubscriber {
 
 	private final CommonMapper commonMapper;
+	private final DefaultEventHandler eventHandler;
 
 	public void handle(WsEvent event) {
 		log.info("received event from RabbitMQ. senderId={}, eventCode={}",
-			event.senderId(), event.envelope().e());
+			event.senderSessionId(), event.envelope().e());
+		eventHandler.handle(event);
 	}
 
 	@RabbitListener(

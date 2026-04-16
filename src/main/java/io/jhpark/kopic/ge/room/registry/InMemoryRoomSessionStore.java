@@ -25,4 +25,9 @@ public class InMemoryRoomSessionStore implements RoomSessionStore {
 	public void remove(String roomId) {
 		sessions.remove(roomId);
 	}
+
+	@Override
+	public boolean remove(String roomId, RoomSession expected) {
+		return sessions.remove(roomId, expected);
+	}
 }

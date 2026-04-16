@@ -10,13 +10,11 @@ public interface RoomService {
 
 	boolean canJoin(String roomId, String sessionId);
 
-	void join(String roomId, String sessionId, String nickname, String wsNodeId, String ownerEngineId, String roomType, int capacity);
+	RoomSubmitResult join(String roomId, String sessionId, String nickname, String wsNodeId);
 
-	void leave(String roomId, String sessionId);
+	RoomSubmitResult leave(String roomId, String sessionId, String wsNodeId);
 
-	void snapshot(String roomId, String sessionId, String requestId);
-	
-	void submit(String roomId, RoomAction action);
+	RoomSubmitResult snapshot(String roomId, String sessionId, String requestId, String wsNodeId);
 
 	void closeRoom(String roomId);
 }

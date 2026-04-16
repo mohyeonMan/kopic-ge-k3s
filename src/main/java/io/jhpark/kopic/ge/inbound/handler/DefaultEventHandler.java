@@ -1,8 +1,15 @@
 package io.jhpark.kopic.ge.inbound.handler;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import io.jhpark.kopic.ge.common.config.NodeProperties;
+import io.jhpark.kopic.ge.common.dto.KopicEnvelope;
+import io.jhpark.kopic.ge.common.util.EventMapper;
+import io.jhpark.kopic.ge.inbound.dto.WsEvent;
+import io.jhpark.kopic.ge.outbound.dto.GeEvent;
+import io.jhpark.kopic.ge.room.service.OutboundBroadcaster;
 import io.jhpark.kopic.ge.room.service.RoomService;
+import java.time.Instant;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -12,52 +19,125 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class DefaultEventHandler {
 
-	private static final int DEFAULT_CAPACITY = 8;
-
 	private final RoomService roomService;
-	private final NodeProperties nodeProperties;
+	private final OutboundBroadcaster roomBroadcaster;
+	private final EventMapper eventMapper;
 
-	public void handleJoin(String roomId, String sessionId, JsonNode payload) {
-		String nickname = textValue(payload, "nickname");
-		if (nickname == null || nickname.isBlank()) {
-			log.warn("room join ignored missing nickname. roomId={}, sessionId={}", roomId, sessionId);
+	public void handle(WsEvent event) {
+		if (event == null || event.envelope() == null) {
 			return;
 		}
+
+		switch (event.envelope().e()) {
+			case 1100 -> handleJoin(event);
+			case 1101 -> handleLeave(event);
+			case 1102 -> handleSnapshot(event);
+			default -> {
+				emitRejected(
+					event.senderSessionId(),
+					event.wsNodeId(),
+					"UNSUPPORTED_EVENT",
+					"unsupported event code: " + event.envelope().e()
+				);
+			}
+		}
+	}
+
+	private void handleJoin(WsEvent event) {
+		JsonNode payload = parsePayload(event, "roomId", "sessionId", "nickname");
+		if (payload == null) {
+			return;
+		}
+
+		String roomId = eventMapper.text(payload, "roomId");
+		String sessionId = eventMapper.text(payload, "sessionId");
+		String nickname = eventMapper.text(payload, "nickname");
+
 		roomService.join(
 			roomId,
 			sessionId,
 			nickname,
-			textValue(payload, "wsNodeId", nodeProperties.nodeId()),
-			textValue(payload, "ownerEngineId", nodeProperties.nodeId()),
-			textValue(payload, "roomType", "PRIVATE"),
-			intValue(payload, "capacity", DEFAULT_CAPACITY)
+			event.wsNodeId()
 		);
 	}
 
-	public void handleLeave(String roomId, String sessionId) {
-		roomService.leave(roomId, sessionId);
-	}
-
-	public void handleSnapshot(String roomId, String sessionId, String requestId) {
-		roomService.snapshot(roomId, sessionId, requestId);
-	}
-
-	private String textValue(JsonNode payload, String fieldName) {
-		return textValue(payload, fieldName, null);
-	}
-
-	private String textValue(JsonNode payload, String fieldName, String defaultValue) {
-		if (payload == null || payload.isNull()) {
-			return defaultValue;
+	private void handleLeave(WsEvent event) {
+		JsonNode payload = parsePayload(event, "roomId", "sessionId");
+		if (payload == null) {
+			return;
 		}
-		String value = payload.path(fieldName).asText(null);
-		return value == null || value.isBlank() ? defaultValue : value;
+
+		String roomId = eventMapper.text(payload, "roomId");
+		String sessionId = eventMapper.text(payload, "sessionId");
+
+		roomService.leave(roomId, sessionId, event.wsNodeId());
 	}
 
-	private int intValue(JsonNode payload, String fieldName, int defaultValue) {
-		if (payload == null || payload.isNull() || !payload.path(fieldName).canConvertToInt()) {
-			return defaultValue;
+	private void handleSnapshot(WsEvent event) {
+		JsonNode payload = parsePayload(event, "roomId", "sessionId", "requestId");
+		if (payload == null) {
+			return;
 		}
-		return payload.path(fieldName).asInt(defaultValue);
+
+		String roomId = eventMapper.text(payload, "roomId");
+		String sessionId = eventMapper.text(payload, "sessionId");
+		String requestId = eventMapper.text(payload, "requestId");
+
+		roomService.snapshot(
+			roomId,
+			sessionId,
+			requestId,
+			event.wsNodeId()
+		);
+	}
+
+	private void emitRejected(
+		String sessionId,
+		String wsNodeId,
+		String reason,
+		String message
+	) {
+		if (isBlank(sessionId)) {
+			log.warn("event rejected without session target. reason={}, message={}", reason, message);
+			return;
+		}
+		roomBroadcaster.send(
+			wsNodeId,
+			new GeEvent(
+				sessionId,
+				new KopicEnvelope(1999, eventMapper.write(rejectedPayload(reason, message))),
+				Instant.now().toString()
+			)
+		);
+	}
+
+	private Map<String, Object> rejectedPayload(
+		String reason,
+		String message
+	) {
+		Map<String, Object> payload = new LinkedHashMap<>();
+		payload.put("reason", reason);
+		payload.put("message", message);
+		return payload;
+	}
+
+	private boolean isBlank(String value) {
+		return value == null || value.isBlank();
+	}
+
+	private JsonNode parsePayload(WsEvent event, String... requiredFields) {
+		String rawPayload = event != null && event.envelope() != null ? event.envelope().p() : null;
+		try {
+			return eventMapper.parse(rawPayload, requiredFields);
+		} catch (IllegalArgumentException illegalArgumentException) {
+			JsonNode fallback = eventMapper.parse(rawPayload);
+			emitRejected(
+				eventMapper.text(fallback, "sessionId"),
+				event.wsNodeId(),
+				"INVALID_REQUEST",
+				illegalArgumentException.getMessage()
+			);
+			return null;
+		}
 	}
 }

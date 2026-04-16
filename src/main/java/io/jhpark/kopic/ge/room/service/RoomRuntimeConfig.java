@@ -11,11 +11,12 @@ public class RoomRuntimeConfig {
 
 	@Bean(name = "roomRunnerExecutor", destroyMethod = "shutdown")
 	public ExecutorService roomRunnerExecutor() {
-		return Executors.newCachedThreadPool();
+		int workers = Math.max(2, Runtime.getRuntime().availableProcessors());
+		return Executors.newFixedThreadPool(workers);
 	}
 
 	@Bean(name = "roomRunnerScheduler", destroyMethod = "shutdown")
 	public ScheduledExecutorService roomRunnerScheduler() {
-		return Executors.newSingleThreadScheduledExecutor();
+		return Executors.newScheduledThreadPool(2);
 	}
 }

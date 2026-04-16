@@ -1,14 +1,17 @@
 package io.jhpark.kopic.ge.room.service;
 
+import io.jhpark.kopic.ge.common.dto.KopicEnvelope;
 import io.jhpark.kopic.ge.common.util.CommonMapper;
+import io.jhpark.kopic.ge.outbound.dto.GeEvent;
 import io.jhpark.kopic.ge.room.dto.Participant;
 import io.jhpark.kopic.ge.room.dto.Room;
 import io.jhpark.kopic.ge.room.dto.RoomSession;
 import io.jhpark.kopic.ge.room.registry.RoomSessionStore;
-import java.time.Instant;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.LinkedHashMap;
-import java.util.Locale;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -19,12 +22,13 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class DefaultRoomService implements RoomService {
 
-	private static final int DEFAULT_CAPACITY = 8;
-	private static final Duration EMPTY_ROOM_CLOSE_DELAY = Duration.ofSeconds(30);
+	private static final String CLOSE_IF_EMPTY_TIMER_KEY = "close-if-empty";
+	private static final Duration CLOSE_IF_EMPTY_DELAY = Duration.ofSeconds(30);
 
 	private final RoomSessionStore sessionStore;
 	private final RoomRunner roomRunner;
 	private final CommonMapper commonMapper;
+	private final OutboundBroadcaster roomBroadcaster;
 
 	@Override
 	public synchronized RoomSnapshot bootstrapRoom(
@@ -39,21 +43,9 @@ public class DefaultRoomService implements RoomService {
 			return existing.get();
 		}
 
-		Room room = new Room(
-			roomId,
-			null,
-			normalizeRoomType(roomType),
-			new LinkedHashMap<>(),
-			"LOBBY",
-			Instant.now(),
-			hostSessionId,
-			ownerEngineId,
-			1L,
-			normalizeCapacity(capacity)
-		);
+		Room room = new Room(roomId);
 		sessionStore.put(new RoomSession(room));
-		log.info("room bootstrapped. roomId={}, ownerEngineId={}, roomType={}, capacity={}",
-			roomId, ownerEngineId, room.getRoomType(), room.getCapacity());
+		log.info("room actor bootstrapped. roomId={}", roomId);
 		return RoomSnapshot.from(room);
 	}
 
@@ -68,119 +60,172 @@ public class DefaultRoomService implements RoomService {
 	public boolean canJoin(String roomId, String sessionId) {
 		return sessionStore.find(roomId)
 			.map(RoomSession::getRoom)
-			.map(room -> room.getParticipants().containsKey(sessionId)
-				|| room.getParticipants().size() < room.getCapacity())
+			.map(room -> !room.getParticipants().containsKey(sessionId))
 			.orElse(false);
 	}
 
 	@Override
-	public void join(String roomId, String sessionId, String nickname, String wsNodeId, String ownerEngineId, String roomType, int capacity) {
-		if (nickname == null || nickname.isBlank()) {
-			throw new IllegalArgumentException("nickname must not be blank");
+	public RoomSubmitResult join(String roomId, String sessionId, String nickname, String wsNodeId) {
+		return submit(
+			new RoomJob(
+				roomId,
+				session -> {
+					Room room = session.getRoom();
+					if (room.getParticipants().containsKey(sessionId)) {
+						return RoomJob.Result.none();
+					}
+					room.getParticipants().put(sessionId, new Participant(wsNodeId, sessionId, nickname));
+					room.increaseVersion();
+
+					RoomSnapshot snapshot = RoomSnapshot.from(room);
+					for (Participant participant : room.getParticipants().values()) {
+						if (!Objects.equals(participant.sessionId(), sessionId)) {
+							sendToParticipant(participant, 2100, snapshot);
+						}
+					}
+					return RoomJob.Result.cancelTimer(CLOSE_IF_EMPTY_TIMER_KEY);
+				}
+			),
+			new RoomJobMeta(sessionId, wsNodeId, null)
+		);
+	}
+
+	@Override
+	public RoomSubmitResult leave(String roomId, String sessionId, String wsNodeId) {
+		return submit(
+			new RoomJob(
+				roomId,
+				session -> {
+					Room room = session.getRoom();
+					Participant removed = room.getParticipants().remove(sessionId);
+					if (removed == null) {
+						return RoomJob.Result.none();
+					}
+					room.increaseVersion();
+					RoomSnapshot snapshot = RoomSnapshot.from(room);
+					for (Participant participant : room.getParticipants().values()) {
+						sendToParticipant(participant, 2101, snapshot);
+					}
+					if (room.getParticipants().isEmpty()) {
+						return RoomJob.Result.schedule(
+							CLOSE_IF_EMPTY_TIMER_KEY,
+							CLOSE_IF_EMPTY_DELAY,
+							closeIfEmptyJob(room.getRoomId())
+						);
+					}
+					return RoomJob.Result.none();
+				}
+			),
+			new RoomJobMeta(sessionId, wsNodeId, null)
+		);
+	}
+
+	@Override
+	public RoomSubmitResult snapshot(String roomId, String sessionId, String requestId, String wsNodeId) {
+		return submit(
+			new RoomJob(
+				roomId,
+				session -> {
+					Room room = session.getRoom();
+					log.info("snapshot requested. roomId={}, sessionId={}, requestId={}",
+						room.getRoomId(), sessionId, requestId);
+					Participant participant = room.getParticipants().get(sessionId);
+					if (participant == null) {
+						return RoomJob.Result.none();
+					}
+					sendToParticipant(participant, 2102, RoomSnapshot.from(room));
+					return RoomJob.Result.none();
+				}
+			),
+			new RoomJobMeta(sessionId, wsNodeId, requestId)
+		);
+	}
+
+	private RoomSubmitResult submit(RoomJob job, RoomJobMeta meta) {
+		RoomSubmitResult result = roomRunner.submit(job, meta);
+		if (result instanceof RoomSubmitResult.Rejected rejected) {
+			emitRejected(meta, rejected);
 		}
-		bootstrapRoom(roomId, ownerEngineId, roomType, sessionId, capacity);
-		submit(roomId, joinAction(sessionId, nickname, wsNodeId));
-	}
-
-	@Override
-	public void leave(String roomId, String sessionId) {
-		submit(roomId, leaveAction(sessionId));
-	}
-
-	@Override
-	public void snapshot(String roomId, String sessionId, String requestId) {
-		submit(roomId, snapshotAction(sessionId, requestId));
-	}
-
-	@Override
-	public void submit(String roomId, RoomAction action) {
-		roomRunner.submit(roomId, action);
+		return result;
 	}
 
 	@Override
 	public void closeRoom(String roomId) {
 		sessionStore.find(roomId).ifPresent(session -> {
-			sessionStore.remove(roomId);
-			log.info("room closed. roomId={}", roomId);
+			if (sessionStore.remove(roomId, session)) {
+				session.close();
+				log.info("room actor closed by service. roomId={}", roomId);
+			}
 		});
 	}
 
-	private String normalizeRoomType(String roomType) {
-		return roomType == null || roomType.isBlank()
-			? "PRIVATE"
-			: roomType.trim().toUpperCase(Locale.ROOT);
+	private RoomJob closeIfEmptyJob(String roomId) {
+		return new RoomJob(
+			roomId,
+			session -> RoomJob.Result.requestCloseIfEmpty()
+		);
 	}
 
-	private int normalizeCapacity(int capacity) {
-		return capacity <= 0 ? DEFAULT_CAPACITY : capacity;
+	private void sendToParticipant(Participant participant, int eventCode, Object payload) {
+		if (participant == null || isBlank(participant.wsNodeId()) || isBlank(participant.sessionId())) {
+			return;
+		}
+		String body = commonMapper.write(payload);
+		if (body == null) {
+			return;
+		}
+		roomBroadcaster.send(
+			participant.wsNodeId(),
+			new GeEvent(
+				participant.sessionId(),
+				new KopicEnvelope(eventCode, body),
+				Instant.now().toString()
+			)
+		);
 	}
 
-	private RoomAction joinAction(String sessionId, String nickname, String wsNodeId) {
-		return ctx -> {
-			Room room = ctx.room();
-			if (room.getParticipants().containsKey(sessionId)) {
-				return;
-			}
-			if (room.getParticipants().size() >= room.getCapacity()) {
-				throw new IllegalStateException("room is full");
-			}
-
-			room.getParticipants().put(sessionId, new Participant(wsNodeId, sessionId, nickname));
-			if (room.getHostSessionId() == null || room.getHostSessionId().isBlank()) {
-				room.setHostSessionId(sessionId);
-			}
-			room.increaseVersion();
-			log.info("participant joined room. roomId={}, sessionId={}, participantCount={}",
-				room.getRoomId(), sessionId, room.getParticipants().size());
-		};
+	private void emitRejected(RoomJobMeta meta, RoomSubmitResult.Rejected rejected) {
+		if (isBlank(rejected.sessionId())) {
+			log.warn("room submit rejected without session target. reason={}, message={}",
+				rejected.reason(), rejected.message());
+			return;
+		}
+		roomBroadcaster.send(
+			resolveWsNodeId(meta, rejected),
+			new GeEvent(
+				rejected.sessionId(),
+				new KopicEnvelope(1999, commonMapper.write(rejectedPayload(rejected))),
+				Instant.now().toString()
+			)
+		);
 	}
 
-	private RoomAction leaveAction(String sessionId) {
-		return ctx -> {
-			Room room = ctx.room();
-			Participant removed = room.getParticipants().remove(sessionId);
-			if (removed == null) {
-				return;
-			}
-
-			if (sessionId.equals(room.getHostSessionId())) {
-				room.setHostSessionId(room.getParticipants().keySet().stream().findFirst().orElse(null));
-			}
-			room.increaseVersion();
-
-			if (room.getParticipants().isEmpty()) {
-				log.info("room became empty. roomId={}, scheduling close in {} ms",
-					room.getRoomId(), EMPTY_ROOM_CLOSE_DELAY.toMillis());
-				ctx.after(EMPTY_ROOM_CLOSE_DELAY, closeIfEmptyAction());
-				return;
-			}
-
-			log.info("participant left room. roomId={}, sessionId={}, participantCount={}",
-				room.getRoomId(), sessionId, room.getParticipants().size());
-		};
+	private String resolveWsNodeId(RoomJobMeta meta, RoomSubmitResult.Rejected rejected) {
+		if (!isBlank(rejected.wsNodeId())) {
+			return rejected.wsNodeId();
+		}
+		if (meta != null && !isBlank(meta.wsNodeId())) {
+			return meta.wsNodeId();
+		}
+		return null;
 	}
 
-	private RoomAction snapshotAction(String sessionId, String requestId) {
-		return ctx -> {
-			Room room = ctx.room();
-			if (!room.getParticipants().containsKey(sessionId)) {
-				log.info("snapshot ignored for non-participant. roomId={}, sessionId={}",
-					room.getRoomId(), sessionId);
-				return;
-			}
-			log.info("room snapshot. roomId={}, sessionId={}, requestId={}, snapshot={}",
-				room.getRoomId(),
-				sessionId,
-				requestId,
-				commonMapper.write(RoomSnapshot.from(room)));
-		};
+	private Map<String, Object> rejectedPayload(RoomSubmitResult.Rejected rejected) {
+		Map<String, Object> payload = new LinkedHashMap<>();
+		payload.put("reason", rejected.reason().name());
+		payload.put("message", rejected.message());
+		payload.put("sessionId", rejected.sessionId());
+		if (rejected.wsNodeId() != null) {
+			payload.put("wsNodeId", rejected.wsNodeId());
+		}
+		if (rejected.requestId() != null) {
+			payload.put("requestId", rejected.requestId());
+		}
+		return payload;
 	}
 
-	private RoomAction closeIfEmptyAction() {
-		return ctx -> {
-			if (ctx.room().getParticipants().isEmpty()) {
-				ctx.closeRoom();
-			}
-		};
+	private boolean isBlank(String value) {
+		return value == null || value.isBlank();
 	}
+
 }

@@ -10,4 +10,6 @@ public interface RoomSessionStore {
 	void put(RoomSession session);
 
 	void remove(String roomId);
+
+	boolean remove(String roomId, RoomSession expected);
 }

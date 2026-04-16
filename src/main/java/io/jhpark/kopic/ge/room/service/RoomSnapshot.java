@@ -8,27 +8,19 @@ import java.util.Map;
 
 public record RoomSnapshot(
 	String roomId,
-	String roomCode,
-	String roomType,
-	String roomState,
-	String hostSessionId,
-	String ownerEngineId,
 	long version,
-	int capacity,
+	int participantCount,
 	Map<String, Participant> participants
 ) {
 
 	public static RoomSnapshot from(Room room) {
+		Map<String, Participant> copiedParticipants =
+			Collections.unmodifiableMap(new LinkedHashMap<>(room.getParticipants()));
 		return new RoomSnapshot(
 			room.getRoomId(),
-			room.getRoomCode(),
-			room.getRoomType(),
-			room.getRoomState(),
-			room.getHostSessionId(),
-			room.getOwnerEngineId(),
 			room.getVersion(),
-			room.getCapacity(),
-			Collections.unmodifiableMap(new LinkedHashMap<>(room.getParticipants()))
+			copiedParticipants.size(),
+			copiedParticipants
 		);
 	}
 }
