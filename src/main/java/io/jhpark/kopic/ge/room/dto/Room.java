@@ -12,15 +12,9 @@ public final class Room {
 	private final String roomId;
 	private final Map<String, Participant> participants = new ConcurrentHashMap<>();
 	private final Instant createdAt;
-	private long version;
 
 	public Room(String roomId) {
 		this.roomId = Objects.requireNonNull(roomId, "roomId");
 		this.createdAt = Instant.now();
-		this.version = 1L;
-	}
-
-	public void increaseVersion() {
-		version += 1;
 	}
 }

@@ -2,5 +2,5 @@ package io.jhpark.kopic.ge.room.service;
 
 public interface RoomRunner {
 
-	RoomSubmitResult submit(RoomJob job, RoomJobMeta meta);
+	RoomSubmitResult submit(String roomId, RoomJob job, WsSessionMeta meta);
 }

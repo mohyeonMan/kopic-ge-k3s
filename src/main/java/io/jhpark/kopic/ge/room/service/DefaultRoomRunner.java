@@ -3,7 +3,6 @@ package io.jhpark.kopic.ge.room.service;
 import io.jhpark.kopic.ge.room.dto.RoomSession;
 import io.jhpark.kopic.ge.room.registry.RoomSessionStore;
 import java.time.Instant;
-import java.util.Objects;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -29,28 +28,37 @@ public final class DefaultRoomRunner implements RoomRunner {
 		this.scheduler = scheduler;
 	}
 
+	
+
 	@Override
-	public RoomSubmitResult submit(RoomJob job, RoomJobMeta meta) {
-		RoomJobMeta safeMeta = meta == null ? RoomJobMeta.none() : meta;
+	public RoomSubmitResult submit(String roomId, RoomJob job, WsSessionMeta meta) {
+		if (isBlank(roomId)) {
+			return RoomSubmitResult.rejected(
+				RoomSubmitResult.Reason.INVALID_REQUEST,
+				"roomId is required",
+				meta.sessionId(),
+				meta.wsNodeId(),
+				null
+			);
+		}
 		if (job == null) {
 			return RoomSubmitResult.rejected(
 				RoomSubmitResult.Reason.INVALID_REQUEST,
 				"job is required",
-				safeMeta.sessionId(),
-				safeMeta.wsNodeId(),
-				safeMeta.requestId()
+				meta.sessionId(),
+				meta.wsNodeId(),
+				null
 			);
 		}
 
-		String roomId = job.roomId();
 		RoomSession session = sessionStore.find(roomId).orElse(null);
 		if (session == null) {
 			return RoomSubmitResult.rejected(
 				RoomSubmitResult.Reason.ROOM_NOT_FOUND,
 				"room not found: " + roomId,
-				safeMeta.sessionId(),
-				safeMeta.wsNodeId(),
-				safeMeta.requestId()
+				meta.sessionId(),
+				meta.wsNodeId(),
+				null
 			);
 		}
 
@@ -61,9 +69,9 @@ public final class DefaultRoomRunner implements RoomRunner {
 			return RoomSubmitResult.rejected(
 				reason,
 				"room mailbox is full or inactive. roomId=" + roomId,
-				safeMeta.sessionId(),
-				safeMeta.wsNodeId(),
-				safeMeta.requestId()
+				meta.sessionId(),
+				meta.wsNodeId(),
+				null
 			);
 		}
 		schedule(session);
@@ -72,7 +80,7 @@ public final class DefaultRoomRunner implements RoomRunner {
 
 	private void execute(RoomSession session, RoomJob job) {
 		try {
-			RoomJob.Result result = job.action().apply(session);
+			RoomJob.FollowUpResult result = job.action().apply(session.getRoom());
 			session.touch(Instant.now());
 			applyResult(session, result);
 		} catch (RuntimeException runtimeException) {
@@ -82,7 +90,7 @@ public final class DefaultRoomRunner implements RoomRunner {
 		}
 	}
 
-	private void applyResult(RoomSession session, RoomJob.Result result) {
+	private void applyResult(RoomSession session, RoomJob.FollowUpResult result) {
 		if (result == null) {
 			return;
 		}
@@ -94,12 +102,17 @@ public final class DefaultRoomRunner implements RoomRunner {
 			closeActor(session);
 			return;
 		}
-		if (result.nextJob() != null) {
-			submitFollowUp(session, result.nextJob());
+		if (result.followUp() != null) {
+			applyFollowUp(session, result.followUp());
 		}
-		if (result.timer() != null) {
-			scheduleFollowUp(session, result.timer());
+	}
+
+	private void applyFollowUp(RoomSession session, RoomJob.FollowUp followUp) {
+		if (followUp.delayed()) {
+			scheduleFollowUp(session, followUp);
+			return;
 		}
+		submitFollowUp(session.getRoom().getRoomId(), followUp.nextJob());
 	}
 
 	private void schedule(RoomSession session) {
@@ -122,42 +135,29 @@ public final class DefaultRoomRunner implements RoomRunner {
 		}
 	}
 
-	private void submitFollowUp(RoomSession session, RoomJob nextJob) {
+	private void submitFollowUp(String roomId, RoomJob nextJob) {
 		if (nextJob == null) {
 			return;
 		}
 
-		if (isSameRoom(session, nextJob)) {
-			if (session.enqueue(nextJob)) {
-				schedule(session);
-				return;
-			}
-			log.warn("follow-up room job dropped. roomId={}, reason=MAILBOX_FULL_OR_INACTIVE",
-				nextJob.roomId());
-			return;
-		}
-
-		if (submit(nextJob, RoomJobMeta.none()) instanceof RoomSubmitResult.Rejected rejected) {
+		if (submit(roomId, nextJob, new WsSessionMeta(null, null)) instanceof RoomSubmitResult.Rejected rejected) {
 			log.warn("follow-up room job rejected. roomId={}, reason={}, message={}",
-				nextJob.roomId(),
+				roomId,
 				rejected.reason(),
 				rejected.message());
 		}
 	}
 
-	private void scheduleFollowUp(RoomSession session, RoomJob.Timer scheduledInstruction) {
+	private void scheduleFollowUp(RoomSession session, RoomJob.FollowUp followUp) {
+		String roomId = session.getRoom().getRoomId();
 		session.registerTimer(
-			scheduledInstruction.timerKey(),
+			followUp.timerKey(),
 			scheduler.schedule(
-				() -> submitFollowUp(session, scheduledInstruction.nextJob()),
-				scheduledInstruction.delay().toMillis(),
+				() -> submitFollowUp(roomId, followUp.nextJob()),
+				followUp.delay().toMillis(),
 				TimeUnit.MILLISECONDS
 			)
 		);
-	}
-
-	private boolean isSameRoom(RoomSession session, RoomJob nextJob) {
-		return Objects.equals(session.getRoom().getRoomId(), nextJob.roomId());
 	}
 
 	private boolean isBlank(String value) {

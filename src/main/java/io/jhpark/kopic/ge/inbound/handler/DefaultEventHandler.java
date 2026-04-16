@@ -3,12 +3,12 @@ package io.jhpark.kopic.ge.inbound.handler;
 import com.fasterxml.jackson.databind.JsonNode;
 import io.jhpark.kopic.ge.common.dto.KopicEnvelope;
 import io.jhpark.kopic.ge.common.util.EventMapper;
+import io.jhpark.kopic.ge.common.util.TimeFormatUtil;
 import io.jhpark.kopic.ge.inbound.dto.WsEvent;
 import io.jhpark.kopic.ge.outbound.dto.GeEvent;
 import io.jhpark.kopic.ge.room.service.OutboundBroadcaster;
 import io.jhpark.kopic.ge.room.service.RoomService;
 import java.time.Instant;
-import java.util.LinkedHashMap;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -24,7 +24,20 @@ public class DefaultEventHandler {
 	private final EventMapper eventMapper;
 
 	public void handle(WsEvent event) {
+		if (!validateInboundSessionMeta(event)) {
+			log.error("invalid inbound event session meta. drop event.");
+			return;
+		}
+
 		if (event == null || event.envelope() == null) {
+			roomBroadcaster.send(
+				event.wsNodeId(),
+				new GeEvent(
+					event.senderSessionId(),
+					new KopicEnvelope(1999, eventMapper.write(rejectedPayload("INVALID_REQUEST", "missing event envelope"))),
+					TimeFormatUtil.now()
+				)
+			);
 			return;
 		}
 
@@ -44,48 +57,45 @@ public class DefaultEventHandler {
 	}
 
 	private void handleJoin(WsEvent event) {
-		JsonNode payload = parsePayload(event, "roomId", "sessionId", "nickname");
+		JsonNode payload = parsePayload(event, "roomId", "nickname");
 		if (payload == null) {
 			return;
 		}
 
 		String roomId = eventMapper.text(payload, "roomId");
-		String sessionId = eventMapper.text(payload, "sessionId");
 		String nickname = eventMapper.text(payload, "nickname");
 
 		roomService.join(
 			roomId,
-			sessionId,
+			event.senderSessionId(),
 			nickname,
 			event.wsNodeId()
 		);
 	}
 
 	private void handleLeave(WsEvent event) {
-		JsonNode payload = parsePayload(event, "roomId", "sessionId");
+		JsonNode payload = parsePayload(event, "roomId");
 		if (payload == null) {
 			return;
 		}
 
 		String roomId = eventMapper.text(payload, "roomId");
-		String sessionId = eventMapper.text(payload, "sessionId");
 
-		roomService.leave(roomId, sessionId, event.wsNodeId());
+		roomService.leave(roomId, event.senderSessionId(), event.wsNodeId());
 	}
 
 	private void handleSnapshot(WsEvent event) {
-		JsonNode payload = parsePayload(event, "roomId", "sessionId", "requestId");
+		JsonNode payload = parsePayload(event, "roomId", "requestId");
 		if (payload == null) {
 			return;
 		}
 
 		String roomId = eventMapper.text(payload, "roomId");
-		String sessionId = eventMapper.text(payload, "sessionId");
 		String requestId = eventMapper.text(payload, "requestId");
 
 		roomService.snapshot(
 			roomId,
-			sessionId,
+			event.senderSessionId(),
 			requestId,
 			event.wsNodeId()
 		);
@@ -115,14 +125,29 @@ public class DefaultEventHandler {
 		String reason,
 		String message
 	) {
-		Map<String, Object> payload = new LinkedHashMap<>();
-		payload.put("reason", reason);
-		payload.put("message", message);
-		return payload;
+		return Map.of(
+			"reason", reason,
+			"message", message
+		);
 	}
 
 	private boolean isBlank(String value) {
 		return value == null || value.isBlank();
+	}
+
+	private boolean validateInboundSessionMeta(WsEvent event) {
+		if (event == null || isBlank(event.senderSessionId())) {
+			log.warn("drop inbound event due to missing senderSessionId. eventCode={}",
+				event != null && event.envelope() != null ? event.envelope().e() : null);
+			return false;
+		}
+		if (isBlank(event.wsNodeId())) {
+			log.warn("drop inbound event due to missing wsNodeId. senderSessionId={}, eventCode={}",
+				event.senderSessionId(),
+				event.envelope() != null ? event.envelope().e() : null);
+			return false;
+		}
+		return true;
 	}
 
 	private JsonNode parsePayload(WsEvent event, String... requiredFields) {
@@ -130,10 +155,9 @@ public class DefaultEventHandler {
 		try {
 			return eventMapper.parse(rawPayload, requiredFields);
 		} catch (IllegalArgumentException illegalArgumentException) {
-			JsonNode fallback = eventMapper.parse(rawPayload);
 			emitRejected(
-				eventMapper.text(fallback, "sessionId"),
-				event.wsNodeId(),
+				event != null ? event.senderSessionId() : null,
+				event != null ? event.wsNodeId() : null,
 				"INVALID_REQUEST",
 				illegalArgumentException.getMessage()
 			);

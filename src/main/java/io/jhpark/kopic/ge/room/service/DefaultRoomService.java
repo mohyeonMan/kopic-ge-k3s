@@ -67,15 +67,13 @@ public class DefaultRoomService implements RoomService {
 	@Override
 	public RoomSubmitResult join(String roomId, String sessionId, String nickname, String wsNodeId) {
 		return submit(
+			roomId,
 			new RoomJob(
-				roomId,
-				session -> {
-					Room room = session.getRoom();
+				room -> {
 					if (room.getParticipants().containsKey(sessionId)) {
-						return RoomJob.Result.none();
+						return RoomJob.FollowUpResult.none();
 					}
 					room.getParticipants().put(sessionId, new Participant(wsNodeId, sessionId, nickname));
-					room.increaseVersion();
 
 					RoomSnapshot snapshot = RoomSnapshot.from(room);
 					for (Participant participant : room.getParticipants().values()) {
@@ -83,66 +81,63 @@ public class DefaultRoomService implements RoomService {
 							sendToParticipant(participant, 2100, snapshot);
 						}
 					}
-					return RoomJob.Result.cancelTimer(CLOSE_IF_EMPTY_TIMER_KEY);
+					return RoomJob.FollowUpResult.cancelTimer(CLOSE_IF_EMPTY_TIMER_KEY);
 				}
 			),
-			new RoomJobMeta(sessionId, wsNodeId, null)
+			new WsSessionMeta(sessionId, wsNodeId)
 		);
 	}
 
 	@Override
 	public RoomSubmitResult leave(String roomId, String sessionId, String wsNodeId) {
 		return submit(
+			roomId,
 			new RoomJob(
-				roomId,
-				session -> {
-					Room room = session.getRoom();
+				room -> {
 					Participant removed = room.getParticipants().remove(sessionId);
 					if (removed == null) {
-						return RoomJob.Result.none();
+						return RoomJob.FollowUpResult.none();
 					}
-					room.increaseVersion();
 					RoomSnapshot snapshot = RoomSnapshot.from(room);
 					for (Participant participant : room.getParticipants().values()) {
 						sendToParticipant(participant, 2101, snapshot);
 					}
 					if (room.getParticipants().isEmpty()) {
-						return RoomJob.Result.schedule(
-							CLOSE_IF_EMPTY_TIMER_KEY,
+						return RoomJob.FollowUpResult.followUp(
+							closeIfEmptyJob(),
 							CLOSE_IF_EMPTY_DELAY,
-							closeIfEmptyJob(room.getRoomId())
+							CLOSE_IF_EMPTY_TIMER_KEY
 						);
 					}
-					return RoomJob.Result.none();
+					return RoomJob.FollowUpResult.none();
 				}
 			),
-			new RoomJobMeta(sessionId, wsNodeId, null)
+			new WsSessionMeta(sessionId, wsNodeId)
 		);
 	}
 
 	@Override
 	public RoomSubmitResult snapshot(String roomId, String sessionId, String requestId, String wsNodeId) {
 		return submit(
+			roomId,
 			new RoomJob(
-				roomId,
-				session -> {
-					Room room = session.getRoom();
+				room -> {
 					log.info("snapshot requested. roomId={}, sessionId={}, requestId={}",
 						room.getRoomId(), sessionId, requestId);
 					Participant participant = room.getParticipants().get(sessionId);
 					if (participant == null) {
-						return RoomJob.Result.none();
+						return RoomJob.FollowUpResult.none();
 					}
 					sendToParticipant(participant, 2102, RoomSnapshot.from(room));
-					return RoomJob.Result.none();
+					return RoomJob.FollowUpResult.none();
 				}
 			),
-			new RoomJobMeta(sessionId, wsNodeId, requestId)
+			new WsSessionMeta(sessionId, wsNodeId)
 		);
 	}
 
-	private RoomSubmitResult submit(RoomJob job, RoomJobMeta meta) {
-		RoomSubmitResult result = roomRunner.submit(job, meta);
+	private RoomSubmitResult submit(String roomId, RoomJob job, WsSessionMeta meta) {
+		RoomSubmitResult result = roomRunner.submit(roomId, job, meta);
 		if (result instanceof RoomSubmitResult.Rejected rejected) {
 			emitRejected(meta, rejected);
 		}
@@ -159,10 +154,9 @@ public class DefaultRoomService implements RoomService {
 		});
 	}
 
-	private RoomJob closeIfEmptyJob(String roomId) {
+	private RoomJob closeIfEmptyJob() {
 		return new RoomJob(
-			roomId,
-			session -> RoomJob.Result.requestCloseIfEmpty()
+			room -> RoomJob.FollowUpResult.requestCloseIfEmpty()
 		);
 	}
 
@@ -184,7 +178,7 @@ public class DefaultRoomService implements RoomService {
 		);
 	}
 
-	private void emitRejected(RoomJobMeta meta, RoomSubmitResult.Rejected rejected) {
+	private void emitRejected(WsSessionMeta meta, RoomSubmitResult.Rejected rejected) {
 		if (isBlank(rejected.sessionId())) {
 			log.warn("room submit rejected without session target. reason={}, message={}",
 				rejected.reason(), rejected.message());
@@ -200,7 +194,7 @@ public class DefaultRoomService implements RoomService {
 		);
 	}
 
-	private String resolveWsNodeId(RoomJobMeta meta, RoomSubmitResult.Rejected rejected) {
+	private String resolveWsNodeId(WsSessionMeta meta, RoomSubmitResult.Rejected rejected) {
 		if (!isBlank(rejected.wsNodeId())) {
 			return rejected.wsNodeId();
 		}

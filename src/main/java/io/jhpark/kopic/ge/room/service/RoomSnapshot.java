@@ -8,7 +8,6 @@ import java.util.Map;
 
 public record RoomSnapshot(
 	String roomId,
-	long version,
 	int participantCount,
 	Map<String, Participant> participants
 ) {
@@ -18,7 +17,6 @@ public record RoomSnapshot(
 			Collections.unmodifiableMap(new LinkedHashMap<>(room.getParticipants()));
 		return new RoomSnapshot(
 			room.getRoomId(),
-			room.getVersion(),
 			copiedParticipants.size(),
 			copiedParticipants
 		);

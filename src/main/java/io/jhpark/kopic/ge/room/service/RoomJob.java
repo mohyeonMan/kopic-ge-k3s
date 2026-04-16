@@ -1,73 +1,84 @@
 package io.jhpark.kopic.ge.room.service;
 
-import io.jhpark.kopic.ge.room.dto.RoomSession;
+import io.jhpark.kopic.ge.room.dto.Room;
 import java.time.Duration;
 import java.util.function.Function;
 
 public record RoomJob(
-	String roomId,
-	Function<RoomSession, Result> action
+	Function<Room, FollowUpResult> action
 ) {
 
 	public RoomJob {
-		if (roomId == null || roomId.isBlank()) {
-			throw new IllegalArgumentException("roomId must not be blank");
-		}
 		if (action == null) {
 			throw new IllegalArgumentException("action must not be null");
 		}
 	}
 
-	public record Result(RoomJob nextJob, Timer timer, String cancelTimerKey, boolean closeIfEmpty) {
+	public record FollowUpResult(FollowUp followUp, String cancelTimerKey, boolean closeIfEmpty) {
 
-		private static final Result NONE = new Result(null, null, null, false);
+		private static final FollowUpResult NONE = new FollowUpResult(null, null, false);
 
-		public Result {}
+		public FollowUpResult {}
 
-		public static Result none() {
+		public static FollowUpResult none() {
 			return NONE;
 		}
 
-		public static Result submit(RoomJob nextJob) {
-			return nextJob == null ? NONE : new Result(nextJob, null, null, false);
+		public static FollowUpResult followUp(RoomJob nextJob, Duration delay, String timerKey) {
+			FollowUp followUp = FollowUp.of(nextJob, delay, timerKey);
+			return followUp == null ? NONE : new FollowUpResult(followUp, null, false);
 		}
 
-		public static Result schedule(String timerKey, Duration delay, RoomJob nextJob) {
-			Timer timer = Timer.of(timerKey, delay, nextJob);
-			return timer == null ? NONE : new Result(null, timer, null, false);
-		}
-
-		public static Result cancelTimer(String timerKey) {
+		public static FollowUpResult cancelTimer(String timerKey) {
 			if (timerKey == null || timerKey.isBlank()) {
 				return NONE;
 			}
-			return new Result(null, null, timerKey, false);
+			return new FollowUpResult(null, timerKey, false);
 		}
 
-		public static Result requestCloseIfEmpty() {
-			return new Result(null, null, null, true);
+		public static FollowUpResult requestCloseIfEmpty() {
+			return new FollowUpResult(null, null, true);
 		}
 	}
 
-	public record Timer(String timerKey, Duration delay, RoomJob nextJob) {
+	public record FollowUp(RoomJob nextJob, Duration delay, String timerKey) {
 
-		public Timer {
-			if (timerKey == null || timerKey.isBlank()) {
-				throw new IllegalArgumentException("timerKey must not be blank");
-			}
-			if (delay == null || delay.isNegative()) {
-				throw new IllegalArgumentException("delay must not be negative");
-			}
+		public FollowUp {
 			if (nextJob == null) {
 				throw new IllegalArgumentException("nextJob must not be null");
 			}
+			if (delay == null) {
+				if (timerKey != null && !timerKey.isBlank()) {
+					throw new IllegalArgumentException("timerKey requires delay");
+				}
+			} else {
+				if (delay.isNegative()) {
+					throw new IllegalArgumentException("delay must not be negative");
+				}
+				if (timerKey == null || timerKey.isBlank()) {
+					throw new IllegalArgumentException("timerKey must not be blank when delayed");
+				}
+			}
 		}
 
-		static Timer of(String timerKey, Duration delay, RoomJob nextJob) {
-			if (timerKey == null || timerKey.isBlank() || delay == null || delay.isNegative() || nextJob == null) {
+		public boolean delayed() {
+			return delay != null;
+		}
+
+		static FollowUp of(RoomJob nextJob, Duration delay, String timerKey) {
+			if (nextJob == null) {
 				return null;
 			}
-			return new Timer(timerKey, delay, nextJob);
+			if (delay == null) {
+				if (timerKey != null && !timerKey.isBlank()) {
+					return null;
+				}
+				return new FollowUp(nextJob, null, null);
+			}
+			if (delay.isNegative() || timerKey == null || timerKey.isBlank()) {
+				return null;
+			}
+			return new FollowUp(nextJob, delay, timerKey);
 		}
 	}
 }
