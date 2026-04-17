@@ -40,7 +40,5 @@ public interface RoomJobFactory {
 
 	RoomJob drawStroke(String sessionId, JsonNode stroke);
 
-	RoomJob drawClear(String sessionId, String expectedTurnId);
-
-	RoomJob guessSubmit(String sessionId, String expectedTurnId, String text);
+	RoomJob guessChat(String sessionId, String text);
 }

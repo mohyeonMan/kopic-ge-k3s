@@ -27,6 +27,7 @@ public class DefaultEventHandler {
 	public void handle(WsEvent event) {
 		if (!validateInboundSessionMeta(event)) {
 			log.error("invalid inbound event session meta. drop event.");
+			
 			return;
 		}
 
@@ -64,9 +65,7 @@ public class DefaultEventHandler {
 
 	private void handleJoin(WsEvent event) {
 		JsonNode payload = event.envelope().p();
-		if (!validateRequired(event, payload, "nickname")) {
-			return;
-		}
+		validateRequired(event, payload, "nickname");
 
 		String roomCode = eventMapper.text(payload, "roomCode");
 		String nickname = eventMapper.text(payload, "nickname");
@@ -91,9 +90,7 @@ public class DefaultEventHandler {
 
 	private void handleLeave(WsEvent event) {
 		JsonNode payload = event.envelope().p();
-		if (!validateRequired(event, payload, "roomId")) {
-			return;
-		}
+		validateRequired(event, payload, "roomId");
 
 		String roomId = eventMapper.text(payload, "roomId");
 
@@ -103,9 +100,7 @@ public class DefaultEventHandler {
 
 	private void handleSnapshot(WsEvent event) {
 		JsonNode payload = event.envelope().p();
-		if (!validateRequired(event, payload, "roomId", "requestId")) {
-			return;
-		}
+		validateRequired(event, payload, "roomId", "requestId");
 
 		String roomId = eventMapper.text(payload, "roomId");
 		String requestId = eventMapper.text(payload, "requestId");
@@ -131,6 +126,16 @@ public class DefaultEventHandler {
 	}
 
 	private void handleChat(WsEvent event) {
+		JsonNode payload = event.envelope().p();
+		validateRequired(event, payload, "t");
+
+		String text = eventMapper.text(payload, "t");
+		roomService.guessChat(
+			event.roomId(),
+			event.senderSessionId(),
+			text
+		);
+
 		log.info(event.toString());
 	}
 
@@ -198,10 +203,9 @@ public class DefaultEventHandler {
 		return true;
 	}
 
-	private boolean validateRequired(WsEvent event, JsonNode payload, String... requiredFields) {
+	private void validateRequired(WsEvent event, JsonNode payload, String... requiredFields) {
 		try {
 			eventMapper.require(payload, requiredFields);
-			return true;
 		} catch (IllegalArgumentException illegalArgumentException) {
 			emitRejected(
 				event.senderSessionId(),
@@ -209,7 +213,6 @@ public class DefaultEventHandler {
 				"INVALID_REQUEST",
 				illegalArgumentException.getMessage()
 			);
-			return false;
 		}
 	}
 

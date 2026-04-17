@@ -23,5 +23,7 @@ public interface RoomService {
 
 	RoomSubmitResult drawStroke(String roomId, String sessionId, JsonNode stroke);
 
+	RoomSubmitResult guessChat(String roomId, String sessionId, String text);
+
 	void closeRoom(String roomId);
 }

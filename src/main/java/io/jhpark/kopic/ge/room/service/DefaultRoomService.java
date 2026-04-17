@@ -94,4 +94,9 @@ public class DefaultRoomService implements RoomService {
 	public RoomSubmitResult drawStroke(String roomId, String sessionId, JsonNode stroke) {
 		return submit(roomId, roomJobFactory.drawStroke(sessionId, stroke));
 	}
+
+	@Override
+	public RoomSubmitResult guessChat(String roomId, String sessionId, String text) {
+		return submit(roomId, roomJobFactory.guessChat(sessionId, text));
+	}
 }

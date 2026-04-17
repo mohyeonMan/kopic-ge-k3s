@@ -183,13 +183,21 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	}
 
 	@Override
-	public RoomJob drawClear(String sessionId, String expectedTurnId) {
-		return notImplemented("drawClear");
-	}
-
-	@Override
-	public RoomJob guessSubmit(String sessionId, String expectedTurnId, String text) {
-		return notImplemented("guessSubmit");
+	public RoomJob guessChat(String sessionId, String text) {
+		return new RoomJob(
+			room -> {
+				for (Participant participant : room.getParticipants().values()) {
+					if (!participant.sessionId().equals(sessionId)) {
+						sendToParticipant(participant, 204, Map.of(
+							"sid", sessionId,
+							"n", participant.nickname(),
+							"t", text
+						));
+					}
+				}
+				return RoomJob.FollowUpResult.none();
+			}
+		);
 	}
 
 	private RoomJob notImplemented(String jobName) {
