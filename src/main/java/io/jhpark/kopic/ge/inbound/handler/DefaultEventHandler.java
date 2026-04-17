@@ -1,6 +1,7 @@
 package io.jhpark.kopic.ge.inbound.handler;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.jhpark.kopic.ge.common.dto.KopicEnvelope;
 import io.jhpark.kopic.ge.common.util.EventMapper;
 import io.jhpark.kopic.ge.common.util.TimeFormatUtil;
@@ -10,7 +11,6 @@ import io.jhpark.kopic.ge.room.service.OutboundBroadcaster;
 import io.jhpark.kopic.ge.room.service.RoomService;
 import io.jhpark.kopic.ge.room.service.RoomSubmitResult;
 import java.time.Instant;
-import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -35,7 +35,10 @@ public class DefaultEventHandler {
 				event.wsNodeId(),
 				new GeEvent(
 					event.senderSessionId(),
-					new KopicEnvelope(1999, eventMapper.write(rejectedPayload("INVALID_REQUEST", "missing event envelope"))),
+					new KopicEnvelope(
+						1999,
+						rejectedPayload("INVALID_REQUEST", "missing event envelope")
+					),
 					TimeFormatUtil.now()
 				)
 			);
@@ -47,6 +50,7 @@ public class DefaultEventHandler {
 			case 1101 -> handleLeave(event);
 			case 1102 -> handleSnapshot(event);
 			case 201 ->  handleStroke(event);
+			case 204 -> handleChat(event);
 			default -> {
 				emitRejected(
 					event.senderSessionId(),
@@ -59,8 +63,8 @@ public class DefaultEventHandler {
 	}
 
 	private void handleJoin(WsEvent event) {
-		JsonNode payload = parsePayload(event, "roomId", "nickname");
-		if (payload == null) {
+		JsonNode payload = event.envelope().p();
+		if (!validateRequired(event, payload, "roomId", "nickname")) {
 			return;
 		}
 
@@ -77,8 +81,8 @@ public class DefaultEventHandler {
 	}
 
 	private void handleLeave(WsEvent event) {
-		JsonNode payload = parsePayload(event, "roomId");
-		if (payload == null) {
+		JsonNode payload = event.envelope().p();
+		if (!validateRequired(event, payload, "roomId")) {
 			return;
 		}
 
@@ -89,8 +93,8 @@ public class DefaultEventHandler {
 	}
 
 	private void handleSnapshot(WsEvent event) {
-		JsonNode payload = parsePayload(event, "roomId", "requestId");
-		if (payload == null) {
+		JsonNode payload = event.envelope().p();
+		if (!validateRequired(event, payload, "roomId", "requestId")) {
 			return;
 		}
 
@@ -104,6 +108,15 @@ public class DefaultEventHandler {
 			event.wsNodeId()
 		);
 		emitResult(event, result);
+	}
+
+	private void handleStroke(WsEvent event){
+
+		log.info(event.toString());	
+	}
+
+	private void handleChat(WsEvent event) {
+		log.info(event.toString());
 	}
 
 	private void emitResult(WsEvent event, RoomSubmitResult result) {
@@ -132,20 +145,23 @@ public class DefaultEventHandler {
 			wsNodeId,
 			new GeEvent(
 				sessionId,
-				new KopicEnvelope(1999, eventMapper.write(rejectedPayload(reason, message))),
+				new KopicEnvelope(
+					1999,
+					rejectedPayload(reason, message)
+				),
 				Instant.now().toString()
 			)
 		);
 	}
 
-	private Map<String, Object> rejectedPayload(
+	private ObjectNode rejectedPayload(
 		String reason,
 		String message
 	) {
-		return Map.of(
-			"reason", reason,
-			"message", message
-		);
+		return eventMapper.rawMapper()
+			.createObjectNode()
+			.put("reason", reason)
+			.put("message", message);
 	}
 
 	private boolean isBlank(String value) {
@@ -167,10 +183,10 @@ public class DefaultEventHandler {
 		return true;
 	}
 
-	private JsonNode parsePayload(WsEvent event, String... requiredFields) {
-		String rawPayload = event != null && event.envelope() != null ? event.envelope().p() : null;
+	private boolean validateRequired(WsEvent event, JsonNode payload, String... requiredFields) {
 		try {
-			return eventMapper.parse(rawPayload, requiredFields);
+			eventMapper.require(payload, requiredFields);
+			return true;
 		} catch (IllegalArgumentException illegalArgumentException) {
 			emitRejected(
 				event != null ? event.senderSessionId() : null,
@@ -178,13 +194,11 @@ public class DefaultEventHandler {
 				"INVALID_REQUEST",
 				illegalArgumentException.getMessage()
 			);
-			return null;
+			return false;
 		}
 	}
 
 	
-	private void handleStroke(WsEvent event){
+	
 
-		log.info(event.toString());	
-	}
 }

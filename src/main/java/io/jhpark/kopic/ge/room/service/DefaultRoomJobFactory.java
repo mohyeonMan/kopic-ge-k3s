@@ -4,6 +4,7 @@ import io.jhpark.kopic.ge.common.dto.KopicEnvelope;
 import io.jhpark.kopic.ge.common.util.CommonMapper;
 import io.jhpark.kopic.ge.outbound.dto.GeEvent;
 import io.jhpark.kopic.ge.room.dto.Participant;
+import com.fasterxml.jackson.databind.JsonNode;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
@@ -175,14 +176,13 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	}
 
 	private void sendToParticipant(Participant participant, int eventCode, Object payload) {
-		
-		String payloadString = commonMapper.write(payload);
+		JsonNode payloadNode = commonMapper.rawMapper().valueToTree(payload);
 		
 		roomBroadcaster.send(
 			participant.wsNodeId(),
 			new GeEvent(
 				participant.sessionId(),
-				new KopicEnvelope(eventCode, payloadString),
+				new KopicEnvelope(eventCode, payloadNode),
 				Instant.now().toString()
 			)
 		);
