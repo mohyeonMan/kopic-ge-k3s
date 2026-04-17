@@ -190,7 +190,6 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 					if (!participant.sessionId().equals(sessionId)) {
 						sendToParticipant(participant, 204, Map.of(
 							"sid", sessionId,
-							"n", participant.nickname(),
 							"t", text
 						));
 					}
