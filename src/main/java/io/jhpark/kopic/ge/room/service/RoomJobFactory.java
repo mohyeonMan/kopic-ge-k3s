@@ -2,6 +2,8 @@ package io.jhpark.kopic.ge.room.service;
 
 import java.util.Map;
 
+import com.fasterxml.jackson.databind.JsonNode;
+
 public interface RoomJobFactory {
 
 	RoomJob join(String sessionId, String nickname, String wsNodeId);
@@ -36,7 +38,7 @@ public interface RoomJobFactory {
 
 	RoomJob resultViewEnd();
 
-	RoomJob drawStroke(String sessionId, String expectedTurnId, Map<String, Object> stroke);
+	RoomJob drawStroke(String sessionId, JsonNode stroke);
 
 	RoomJob drawClear(String sessionId, String expectedTurnId);
 

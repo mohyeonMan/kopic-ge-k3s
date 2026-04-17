@@ -8,6 +8,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import com.fasterxml.jackson.databind.JsonNode;
+
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -20,8 +22,7 @@ public class DefaultRoomService implements RoomService {
 	@Override
 	public synchronized RoomSnapshot bootstrapRoom(
 		String roomId,
-		String ownerEngineId,
-		String roomType,
+		int roomType,
 		String hostSessionId,
 		int capacity
 	) {
@@ -52,7 +53,16 @@ public class DefaultRoomService implements RoomService {
 	}
 
 	@Override
-	public RoomSubmitResult join(String roomId, String sessionId, String nickname, String wsNodeId) {
+	public RoomSubmitResult privateJoin(String roomCode, String sessionId, String nickname, String wsNodeId) {
+		String roomId = "room-1";
+		bootstrapRoom(roomId, 1, sessionId, 10);
+
+		return submit(roomId, roomJobFactory.join(sessionId, nickname, wsNodeId));
+	}
+
+	@Override
+	public RoomSubmitResult quickJoin(String sessionId, String nickname, String wsNodeId) {
+		String roomId = "room-1";
 		return submit(roomId, roomJobFactory.join(sessionId, nickname, wsNodeId));
 	}
 
@@ -78,5 +88,10 @@ public class DefaultRoomService implements RoomService {
 				log.info("room actor closed by service. roomId={}", roomId);
 			}
 		});
+	}
+
+	@Override
+	public RoomSubmitResult drawStroke(String roomId, String sessionId, JsonNode stroke) {
+		return submit(roomId, roomJobFactory.drawStroke(sessionId, stroke));
 	}
 }

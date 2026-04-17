@@ -31,12 +31,14 @@ public final class DefaultRoomRunner implements RoomRunner {
 	@Override
 	public RoomSubmitResult submit(String roomId, RoomJob job) {
 		if (isBlank(roomId)) {
+			log.warn("roomId is blank. reject room job.");
 			return RoomSubmitResult.rejected(
 				RoomSubmitResult.Reason.INVALID_REQUEST,
 				"roomId is required"
 			);
 		}
 		if (job == null) {
+			log.warn("job is null. reject room job. roomId={}", roomId);
 			return RoomSubmitResult.rejected(
 				RoomSubmitResult.Reason.INVALID_REQUEST,
 				"job is required"

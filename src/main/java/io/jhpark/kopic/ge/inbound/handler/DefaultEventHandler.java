@@ -46,8 +46,8 @@ public class DefaultEventHandler {
 		}
 
 		switch (event.envelope().e()) {
-			case 1100 -> handleJoin(event);
-			case 1101 -> handleLeave(event);
+			case 101 -> handleJoin(event);
+			case 102 -> handleLeave(event);
 			case 1102 -> handleSnapshot(event);
 			case 201 ->  handleStroke(event);
 			case 204 -> handleChat(event);
@@ -64,19 +64,28 @@ public class DefaultEventHandler {
 
 	private void handleJoin(WsEvent event) {
 		JsonNode payload = event.envelope().p();
-		if (!validateRequired(event, payload, "roomId", "nickname")) {
+		if (!validateRequired(event, payload, "nickname")) {
 			return;
 		}
 
-		String roomId = eventMapper.text(payload, "roomId");
+		String roomCode = eventMapper.text(payload, "roomCode");
 		String nickname = eventMapper.text(payload, "nickname");
 
-		RoomSubmitResult result = roomService.join(
-			roomId,
-			event.senderSessionId(),
-			nickname,
-			event.wsNodeId()
-		);
+		RoomSubmitResult result;
+		if (!isBlank(roomCode)) {
+			result = roomService.privateJoin(
+				roomCode,
+				event.senderSessionId(),
+				nickname,
+				event.wsNodeId()
+			);
+		} else {
+			result = roomService.quickJoin(
+				event.senderSessionId(),
+				nickname,
+				event.wsNodeId()
+			);
+		}
 		emitResult(event, result);
 	}
 
@@ -112,7 +121,13 @@ public class DefaultEventHandler {
 
 	private void handleStroke(WsEvent event){
 
-		log.info(event.toString());	
+		JsonNode payload = event.envelope().p();
+		roomService.drawStroke(
+			event.roomId(),
+			event.senderSessionId(),
+			payload
+		);
+		
 	}
 
 	private void handleChat(WsEvent event) {
@@ -189,8 +204,8 @@ public class DefaultEventHandler {
 			return true;
 		} catch (IllegalArgumentException illegalArgumentException) {
 			emitRejected(
-				event != null ? event.senderSessionId() : null,
-				event != null ? event.wsNodeId() : null,
+				event.senderSessionId(),
+				event.wsNodeId(),
 				"INVALID_REQUEST",
 				illegalArgumentException.getMessage()
 			);

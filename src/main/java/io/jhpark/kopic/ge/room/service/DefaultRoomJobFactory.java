@@ -8,7 +8,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
-import java.util.Objects;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -27,68 +26,86 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	@Override
 	public RoomJob join(String sessionId, String nickname, String wsNodeId) {
 		return new RoomJob(
-			room -> {
-				if (room.getParticipants().containsKey(sessionId)) {
-					return RoomJob.FollowUpResult.none();
-				}
-				room.getParticipants().put(sessionId, new Participant(wsNodeId, sessionId, nickname));
+				room -> {
 
-				RoomSnapshot snapshot = RoomSnapshot.from(room);
-				for (Participant participant : room.getParticipants().values()) {
-					if (!Objects.equals(participant.sessionId(), sessionId)) {
-						sendToParticipant(participant, 2100, snapshot);
+					log.info("join requested. roomId={}, sessionId={}, nickname={}", room.getRoomId(), sessionId,
+							nickname);
+
+					// 검증
+					if (room.getParticipants().containsKey(sessionId)) {
+						log.warn("session already exists. roomId={}, sessionId={}", room.getRoomId(), sessionId);
+						return RoomJob.FollowUpResult.none();
 					}
-				}
-				return RoomJob.FollowUpResult.cancelTimer(CLOSE_IF_EMPTY_TIMER_KEY);
-			}
-		);
+
+					Map<String, Participant> participants = room.getParticipants();
+					participants.put(sessionId, new Participant(wsNodeId, sessionId, nickname));
+
+					log.info("joined participant. roomId={}, sessionId={}, nickname={}", room.getRoomId(), sessionId,
+							nickname);
+					for (Participant participant : participants.values()) {
+						sendToParticipant(participant, 301, Map.of(
+								"sessionId", sessionId,
+								"nickname", nickname));
+					}
+
+					log.info("current room participants: {}", room.getParticipants().keySet());
+
+					return RoomJob.FollowUpResult.cancelTimer(CLOSE_IF_EMPTY_TIMER_KEY);
+				});
 	}
 
 	@Override
 	public RoomJob leave(String sessionId) {
 		return new RoomJob(
-			room -> {
-				Participant removed = room.getParticipants().remove(sessionId);
-				if (removed == null) {
-					return RoomJob.FollowUpResult.none();
-				}
-				RoomSnapshot snapshot = RoomSnapshot.from(room);
-				for (Participant participant : room.getParticipants().values()) {
-					sendToParticipant(participant, 2101, snapshot);
-				}
-				if (room.getParticipants().isEmpty()) {
-					return RoomJob.FollowUpResult.followUp(
-						closeIfEmpty(),
-						CLOSE_IF_EMPTY_DELAY,
-						CLOSE_IF_EMPTY_TIMER_KEY
-					);
-				}
-				return RoomJob.FollowUpResult.none();
-			}
-		);
+				room -> {
+					log.info("leave requested. roomId={}, sessionId={}", room.getRoomId(), sessionId);
+
+					Map<String, Participant> participants = room.getParticipants();
+
+					Participant removed = participants.remove(sessionId);
+					if (removed == null) {
+						return RoomJob.FollowUpResult.none();
+					}
+
+					if (participants.isEmpty()) {
+						return RoomJob.FollowUpResult.followUp(
+								closeIfEmpty(),
+								CLOSE_IF_EMPTY_DELAY,
+								CLOSE_IF_EMPTY_TIMER_KEY);
+					} else {
+
+						for (Participant participant : participants.values()) {
+							sendToParticipant(participant, 302, Map.of(
+									"sessionId", sessionId,
+									"nickname", removed.nickname()));
+						}
+
+						return RoomJob.FollowUpResult.none();
+					}
+
+					
+				});
 	}
 
 	@Override
 	public RoomJob snapshot(String sessionId, String requestId) {
 		return new RoomJob(
-			room -> {
-				log.info("snapshot requested. roomId={}, sessionId={}, requestId={}",
-					room.getRoomId(), sessionId, requestId);
-				Participant participant = room.getParticipants().get(sessionId);
-				if (participant == null) {
+				room -> {
+					log.info("snapshot requested. roomId={}, sessionId={}, requestId={}",
+							room.getRoomId(), sessionId, requestId);
+					Participant participant = room.getParticipants().get(sessionId);
+					if (participant == null) {
+						return RoomJob.FollowUpResult.none();
+					}
+					sendToParticipant(participant, 2102, RoomSnapshot.from(room));
 					return RoomJob.FollowUpResult.none();
-				}
-				sendToParticipant(participant, 2102, RoomSnapshot.from(room));
-				return RoomJob.FollowUpResult.none();
-			}
-		);
+				});
 	}
 
 	@Override
 	public RoomJob closeIfEmpty() {
 		return new RoomJob(
-			room -> RoomJob.FollowUpResult.requestCloseIfEmpty()
-		);
+				room -> RoomJob.FollowUpResult.requestCloseIfEmpty());
 	}
 
 	@Override
@@ -152,8 +169,17 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	}
 
 	@Override
-	public RoomJob drawStroke(String sessionId, String expectedTurnId, Map<String, Object> stroke) {
-		return notImplemented("drawStroke");
+	public RoomJob drawStroke(String sessionId, JsonNode stroke) {
+		return new RoomJob(
+				room -> {
+					for (Participant participant : room.getParticipants().values()) {
+						if (!participant.sessionId().equals(sessionId)) {
+							sendToParticipant(participant, 201, stroke);
+						}
+					}
+					return RoomJob.FollowUpResult.none();
+				}
+			);
 	}
 
 	@Override
@@ -168,24 +194,21 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 
 	private RoomJob notImplemented(String jobName) {
 		return new RoomJob(
-			room -> {
-				log.warn("room job not implemented yet. job={}, roomId={}", jobName, room.getRoomId());
-				return RoomJob.FollowUpResult.none();
-			}
-		);
+				room -> {
+					log.warn("room job not implemented yet. job={}, roomId={}", jobName, room.getRoomId());
+					return RoomJob.FollowUpResult.none();
+				});
 	}
 
 	private void sendToParticipant(Participant participant, int eventCode, Object payload) {
 		JsonNode payloadNode = commonMapper.rawMapper().valueToTree(payload);
-		
+
 		roomBroadcaster.send(
-			participant.wsNodeId(),
-			new GeEvent(
-				participant.sessionId(),
-				new KopicEnvelope(eventCode, payloadNode),
-				Instant.now().toString()
-			)
-		);
+				participant.wsNodeId(),
+				new GeEvent(
+						participant.sessionId(),
+						new KopicEnvelope(eventCode, payloadNode),
+						Instant.now().toString()));
 	}
 
 }
