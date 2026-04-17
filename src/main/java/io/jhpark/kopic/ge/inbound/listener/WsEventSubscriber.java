@@ -17,7 +17,7 @@ public class WsEventSubscriber {
 	private final DefaultEventHandler eventHandler;
 
 	public void handle(WsEvent event) {
-		log.info("received event from RabbitMQ. senderId={}, eventCode={}",
+		log.debug("received event from RabbitMQ. senderId={}, eventCode={}",
 			event.senderSessionId(), event.envelope().e());
 		eventHandler.handle(event);
 	}
@@ -27,7 +27,7 @@ public class WsEventSubscriber {
 		containerFactory = "rabbitListenerContainerFactory"
 	)
 	public void receive(String payload) {
-		log.info("Received message from RabbitMQ: {}", payload);
+		log.debug("Received message from RabbitMQ: {}", payload);
 		WsEvent event = commonMapper.read(payload, WsEvent.class);
 		if (event == null) {
 			log.warn("Dropping non-JSON or unmappable RabbitMQ payload: {}", payload);

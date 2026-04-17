@@ -5,6 +5,7 @@ import io.jhpark.kopic.ge.common.dto.KopicEnvelope;
 public record WsEvent(
     String senderSessionId,
     String wsNodeId,
+    String roomId,
     KopicEnvelope envelope,
     String sentAt
 ) {

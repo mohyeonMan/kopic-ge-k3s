@@ -30,7 +30,7 @@ public class RabbitEventPublisher implements OutboundBroadcaster {
 			return;
 		}
 
-		String routingKey = rabbitProperties.routingKey(wsNodeId);
+		String routingKey = rabbitProperties.outboundRoutingKey(wsNodeId);
 		rabbitTemplate.convertAndSend(rabbitProperties.outboundExchange(), routingKey, body);
 		log.info("event pushed. wsNodeId={}, targetSessionId={}, eventCode={}, routingKey={}",
 			wsNodeId, event.targetSessionId(), event.envelope().e(), routingKey);

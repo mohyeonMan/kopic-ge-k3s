@@ -46,6 +46,7 @@ public class DefaultEventHandler {
 			case 1100 -> handleJoin(event);
 			case 1101 -> handleLeave(event);
 			case 1102 -> handleSnapshot(event);
+			case 201 ->  handleStroke(event);
 			default -> {
 				emitRejected(
 					event.senderSessionId(),
@@ -72,7 +73,7 @@ public class DefaultEventHandler {
 			nickname,
 			event.wsNodeId()
 		);
-		emitRejectedIfNeeded(event, result);
+		emitResult(event, result);
 	}
 
 	private void handleLeave(WsEvent event) {
@@ -84,7 +85,7 @@ public class DefaultEventHandler {
 		String roomId = eventMapper.text(payload, "roomId");
 
 		RoomSubmitResult result = roomService.leave(roomId, event.senderSessionId(), event.wsNodeId());
-		emitRejectedIfNeeded(event, result);
+		emitResult(event, result);
 	}
 
 	private void handleSnapshot(WsEvent event) {
@@ -102,10 +103,10 @@ public class DefaultEventHandler {
 			requestId,
 			event.wsNodeId()
 		);
-		emitRejectedIfNeeded(event, result);
+		emitResult(event, result);
 	}
 
-	private void emitRejectedIfNeeded(WsEvent event, RoomSubmitResult result) {
+	private void emitResult(WsEvent event, RoomSubmitResult result) {
 		if (!(result instanceof RoomSubmitResult.Rejected rejected)) {
 			return;
 		}
@@ -179,5 +180,11 @@ public class DefaultEventHandler {
 			);
 			return null;
 		}
+	}
+
+	
+	private void handleStroke(WsEvent event){
+
+		log.info(event.toString());	
 	}
 }
