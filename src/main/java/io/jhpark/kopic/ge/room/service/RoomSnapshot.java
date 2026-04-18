@@ -19,11 +19,12 @@ public record RoomSnapshot(
 	public static RoomSnapshot from(Room room) {
 		Map<String, Participant> copiedParticipants =
 			Collections.unmodifiableMap(new LinkedHashMap<>(room.getParticipants()));
+		List<JsonNode> copiedCanvas = List.copyOf(room.getCurrentCanvas());
 		return new RoomSnapshot(
 			room.getRoomId(),
 			copiedParticipants.size(),
 			copiedParticipants,
-			Collections.unmodifiableList(room.getCurrentCanvas())
+			copiedCanvas
 		);
 	}
 }

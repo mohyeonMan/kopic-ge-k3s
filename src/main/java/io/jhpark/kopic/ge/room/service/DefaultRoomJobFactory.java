@@ -5,6 +5,7 @@ import io.jhpark.kopic.ge.common.util.CommonMapper;
 import io.jhpark.kopic.ge.common.util.TimeFormatUtil;
 import io.jhpark.kopic.ge.outbound.dto.GeEvent;
 import io.jhpark.kopic.ge.room.dto.Participant;
+import io.jhpark.kopic.ge.room.dto.Room;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import java.time.Duration;
@@ -39,9 +40,19 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 						return RoomJob.FollowUpResult.none();
 					}
 
-					Participant newParticipant = new Participant(wsNodeId, sessionId, nickname);
+					Participant newParticipant = new Participant(
+						wsNodeId,
+						sessionId,
+						nickname,
+						TimeFormatUtil.now()
+					);
 					
 					Map<String, Participant> participants = room.getParticipants();
+					if (participants.size() >= room.getCapacity()) {
+						sendErrorToParticipant(newParticipant, 1999, "ROOM_FULL", "room is full");
+						return RoomJob.FollowUpResult.none();
+					}
+
 					participants.put(sessionId, newParticipant);
 					sendToParticipant(newParticipant, 408, Map.of(
 						"sid", sessionId,
@@ -58,7 +69,12 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 
 					log.info("current room participants: {}", room.getParticipants().keySet());
 
-					return RoomJob.FollowUpResult.cancelTimer(CLOSE_IF_EMPTY_TIMER_KEY);
+					RoomJob.FollowUpAction followUpAction = resolveQuickJoinCandidateAction(room);
+					return new RoomJob.FollowUpResult(
+						null,
+						CLOSE_IF_EMPTY_TIMER_KEY,
+						followUpAction
+					);
 				});
 	}
 
@@ -69,29 +85,44 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 					log.info("leave requested. roomId={}, sessionId={}", room.getRoomId(), sessionId);
 
 					Map<String, Participant> participants = room.getParticipants();
+					int beforeSize = participants.size();
 
 					Participant removed = participants.remove(sessionId);
 					if (removed == null) {
+						log.warn("leave ignored because session was not in room. roomId={}, sessionId={}",
+							room.getRoomId(), sessionId);
 						return RoomJob.FollowUpResult.none();
 					}
-
+					log.info("participant removed from room. roomId={}, sessionId={}, beforeCount={}, afterCount={}",
+						room.getRoomId(), sessionId, beforeSize, participants.size());
+					boolean wasFull = room.getRoomType() == Room.QUICK_ROOM_TYPE
+						&& beforeSize >= room.getCapacity();
+					RoomJob.FollowUp followUp = null;
 					if (participants.isEmpty()) {
-						return RoomJob.FollowUpResult.followUp(
-								closeIfEmpty(),
-								CLOSE_IF_EMPTY_DELAY,
-								CLOSE_IF_EMPTY_TIMER_KEY);
+						log.info(
+							"room became empty after leave. roomId={}, sessionId={}, closeDelaySeconds={}",
+							room.getRoomId(),
+							sessionId,
+							CLOSE_IF_EMPTY_DELAY.toSeconds()
+						);
+						followUp = new RoomJob.FollowUp(
+							closeIfEmpty(),
+							CLOSE_IF_EMPTY_DELAY,
+							CLOSE_IF_EMPTY_TIMER_KEY
+						);
 					} else {
-
+						log.info("leave broadcast sent. roomId={}, leftSessionId={}, remainingParticipants={}",
+							room.getRoomId(), sessionId, participants.size());
 						for (Participant participant : participants.values()) {
 							sendToParticipant(participant, 302, Map.of(
 									"sessionId", sessionId,
 									"nickname", removed.nickname()));
 						}
-
-						return RoomJob.FollowUpResult.none();
 					}
-
-					
+					RoomJob.FollowUpAction followUpAction = wasFull
+						? RoomJob.FollowUpAction.ADD_QUICK_JOIN_CANDIDATE
+						: RoomJob.FollowUpAction.NONE;
+					return new RoomJob.FollowUpResult(followUp, null, followUpAction);
 				});
 	}
 
@@ -111,7 +142,14 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	@Override
 	public RoomJob closeIfEmpty() {
 		return new RoomJob(
-				room -> RoomJob.FollowUpResult.requestCloseIfEmpty());
+				room -> {
+					if (!room.getParticipants().isEmpty()) {
+						log.info("close-if-empty skipped in job. roomId={}, participantCount={}",
+							room.getRoomId(), room.getParticipants().size());
+						return RoomJob.FollowUpResult.none();
+					}
+					return RoomJob.FollowUpResult.requestCloseIfEmpty();
+				});
 	}
 
 	@Override
@@ -224,6 +262,16 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 					log.warn("room job not implemented yet. job={}, roomId={}", jobName, room.getRoomId());
 					return RoomJob.FollowUpResult.none();
 				});
+	}
+
+	private RoomJob.FollowUpAction resolveQuickJoinCandidateAction(Room room) {
+		if (room.getRoomType() != Room.QUICK_ROOM_TYPE) {
+			return RoomJob.FollowUpAction.NONE;
+		}
+		if (room.getParticipants().size() >= room.getCapacity()) {
+			return RoomJob.FollowUpAction.REMOVE_QUICK_JOIN_CANDIDATE;
+		}
+		return RoomJob.FollowUpAction.ADD_QUICK_JOIN_CANDIDATE;
 	}
 
 	private void sendToParticipant(Participant participant, int eventCode, Object payload) {

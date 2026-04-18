@@ -11,7 +11,9 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import lombok.Getter;
+import lombok.extern.slf4j.Slf4j;
 
+@Slf4j
 @Getter
 public final class RoomSession {
 
@@ -70,8 +72,13 @@ public final class RoomSession {
 		}
 		ScheduledFuture<?> existing = timers.remove(timerKey);
 		if (existing != null) {
-			existing.cancel(false);
+			boolean cancelled = existing.cancel(false);
+			log.info("room timer cancelled. roomId={}, timerKey={}, cancelled={}",
+				room.getRoomId(), timerKey, cancelled);
+			return;
 		}
+		log.info("room timer cancel skipped because timer was not found. roomId={}, timerKey={}",
+			room.getRoomId(), timerKey);
 	}
 
 	public void close() {

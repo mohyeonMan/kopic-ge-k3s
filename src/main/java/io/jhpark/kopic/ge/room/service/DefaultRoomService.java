@@ -21,19 +21,13 @@ public class DefaultRoomService implements RoomService {
 
 	@Override
 	public synchronized RoomSnapshot bootstrapRoom(
-		String roomId,
 		int roomType,
-		String hostSessionId,
-		int capacity
+		String hostSessionId
 	) {
-		Optional<RoomSnapshot> existing = findRoom(roomId);
-		if (existing.isPresent()) {
-			return existing.get();
-		}
-
-		Room room = new Room(roomId);
+		
+		Room room = new Room(roomType, hostSessionId);
 		sessionStore.put(new RoomSession(room));
-		log.info("room actor bootstrapped. roomId={}", roomId);
+		log.info("room actor bootstrapped. roomId={}, roomType={}, capacity={}", room.getRoomId(), roomType, room.getCapacity());
 		return RoomSnapshot.from(room);
 	}
 
@@ -46,20 +40,39 @@ public class DefaultRoomService implements RoomService {
 
 	@Override
 	public RoomSubmitResult privateJoin(String roomCode, String sessionId, String nickname, String wsNodeId) {
-		String roomId = "room-1";
-		bootstrapRoom(roomId, 1, sessionId, 10);
+		String roomId = roomCode;
+		bootstrapRoom(Room.PRIVATE_ROOM_TYPE, sessionId);
 
 		return submit(roomId, roomJobFactory.join(sessionId, nickname, wsNodeId));
 	}
 
 	@Override
 	public RoomSubmitResult quickJoin(String sessionId, String nickname, String wsNodeId) {
-		String roomId = "room-1";
+		Optional<String> candidateRoomId = sessionStore.findFirstAvailableQuickRoomId();
+		String roomId;
+		if (candidateRoomId.isPresent()) {
+			roomId = candidateRoomId.get();
+			log.debug(
+				"quick join room selected. roomId={}, sessionId={}, nickname={}, source=existing-candidate",
+				roomId,
+				sessionId,
+				nickname
+			);
+		} else {
+			roomId = bootstrapRoom(Room.QUICK_ROOM_TYPE, null).roomId();
+			log.debug(
+				"quick join room created. roomId={}, sessionId={}, nickname={}, source=new-room-created",
+				roomId,
+				sessionId,
+				nickname
+			);
+		}
 		return submit(roomId, roomJobFactory.join(sessionId, nickname, wsNodeId));
 	}
 
 	@Override
 	public RoomSubmitResult leave(String roomId, String sessionId, String wsNodeId) {
+		log.debug("leave requested. roomId={}, sessionId={}", roomId, sessionId);
 		return submit(roomId, roomJobFactory.leave(sessionId));
 	}
 
@@ -73,16 +86,6 @@ public class DefaultRoomService implements RoomService {
 	}
 
 	@Override
-	public void closeRoom(String roomId) {
-		sessionStore.find(roomId).ifPresent(session -> {
-			if (sessionStore.remove(roomId, session)) {
-				session.close();
-				log.info("room actor closed by service. roomId={}", roomId);
-			}
-		});
-	}
-
-	@Override
 	public RoomSubmitResult drawStroke(String roomId, String sessionId, JsonNode stroke) {
 		return submit(roomId, roomJobFactory.drawStroke(sessionId, stroke));
 	}
@@ -91,4 +94,5 @@ public class DefaultRoomService implements RoomService {
 	public RoomSubmitResult guessChat(String roomId, String sessionId, String text) {
 		return submit(roomId, roomJobFactory.guessChat(sessionId, text));
 	}
+
 }

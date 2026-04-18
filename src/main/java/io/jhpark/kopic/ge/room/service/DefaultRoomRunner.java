@@ -47,6 +47,7 @@ public final class DefaultRoomRunner implements RoomRunner {
 
 		RoomSession session = sessionStore.find(roomId).orElse(null);
 		if (session == null) {
+			log.warn("room job rejected because room not found. roomId={}", roomId);
 			return RoomSubmitResult.rejected(
 				RoomSubmitResult.Reason.ROOM_NOT_FOUND,
 				"room not found: " + roomId
@@ -57,6 +58,7 @@ public final class DefaultRoomRunner implements RoomRunner {
 			RoomSubmitResult.Reason reason = session.isActive()
 				? RoomSubmitResult.Reason.MAILBOX_FULL
 				: RoomSubmitResult.Reason.ACTOR_INACTIVE;
+			log.warn("room job rejected because enqueue failed. roomId={}, reason={}", roomId, reason);
 			return RoomSubmitResult.rejected(
 				reason,
 				"room mailbox is full or inactive. roomId=" + roomId
@@ -82,17 +84,40 @@ public final class DefaultRoomRunner implements RoomRunner {
 		if (result == null) {
 			return;
 		}
-
 		if (!isBlank(result.cancelTimerKey())) {
 			session.cancelTimer(result.cancelTimerKey());
 		}
-		if (result.closeIfEmpty() && session.getRoom().getParticipants().isEmpty()) {
-			closeActor(session);
+		if (applyFollowUpAction(session, result.followUpAction())) {
 			return;
 		}
 		if (result.followUp() != null) {
 			applyFollowUp(session, result.followUp());
 		}
+	}
+
+	private boolean applyFollowUpAction(RoomSession session, RoomJob.FollowUpAction action) {
+		if (action == null || action == RoomJob.FollowUpAction.NONE) {
+			return false;
+		}
+		String roomId = session.getRoom().getRoomId();
+		switch (action) {
+			case REQUEST_CLOSE_IF_EMPTY -> {
+				closeActor(session);
+				return true;
+			}
+			case ADD_QUICK_JOIN_CANDIDATE -> {
+				sessionStore.addQuickJoinCandidate(roomId);
+				log.debug("quick join candidate added. roomId={}", roomId);
+			}
+			case REMOVE_QUICK_JOIN_CANDIDATE -> {
+				sessionStore.removeQuickJoinCandidate(roomId);
+				log.debug("quick join candidate removed. roomId={}", roomId);
+			}
+			case NONE -> {
+				return false;
+			}
+		}
+		return false;
 	}
 
 	private void applyFollowUp(RoomSession session, RoomJob.FollowUp followUp) {
@@ -138,6 +163,8 @@ public final class DefaultRoomRunner implements RoomRunner {
 
 	private void scheduleFollowUp(RoomSession session, RoomJob.FollowUp followUp) {
 		String roomId = session.getRoom().getRoomId();
+		log.debug("room follow-up scheduled. roomId={}, timerKey={}, delayMs={}",
+			roomId, followUp.timerKey(), followUp.delay().toMillis());
 		session.registerTimer(
 			followUp.timerKey(),
 			scheduler.schedule(
@@ -154,10 +181,14 @@ public final class DefaultRoomRunner implements RoomRunner {
 
 	private void closeActor(RoomSession session) {
 		String roomId = session.getRoom().getRoomId();
+		int participantCount = session.getRoom().getParticipants().size();
+		log.debug("closing room actor requested. roomId={}, participantCount={}", roomId, participantCount);
 		boolean removed = sessionStore.remove(roomId, session);
 		session.close();
 		if (removed) {
-			log.info("room actor closed. roomId={}", roomId);
+			log.debug("room actor closed. roomId={}", roomId);
+		} else {
+			log.warn("room actor close skipped because session mapping changed. roomId={}", roomId);
 		}
 	}
 }

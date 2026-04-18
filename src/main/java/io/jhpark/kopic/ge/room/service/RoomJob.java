@@ -14,11 +14,20 @@ public record RoomJob(
 		}
 	}
 
-	public record FollowUpResult(FollowUp followUp, String cancelTimerKey, boolean closeIfEmpty) {
+	public record FollowUpResult(
+		FollowUp followUp,
+		String cancelTimerKey,
+		FollowUpAction followUpAction
+	) {
 
-		private static final FollowUpResult NONE = new FollowUpResult(null, null, false);
+		private static final FollowUpResult NONE =
+			new FollowUpResult(null, null, FollowUpAction.NONE);
 
-		public FollowUpResult {}
+		public FollowUpResult {
+			if (followUpAction == null) {
+				followUpAction = FollowUpAction.NONE;
+			}
+		}
 
 		public static FollowUpResult none() {
 			return NONE;
@@ -26,19 +35,28 @@ public record RoomJob(
 
 		public static FollowUpResult followUp(RoomJob nextJob, Duration delay, String timerKey) {
 			FollowUp followUp = FollowUp.of(nextJob, delay, timerKey);
-			return followUp == null ? NONE : new FollowUpResult(followUp, null, false);
+			return followUp == null
+				? NONE
+				: new FollowUpResult(followUp, null, FollowUpAction.NONE);
 		}
 
 		public static FollowUpResult cancelTimer(String timerKey) {
 			if (timerKey == null || timerKey.isBlank()) {
 				return NONE;
 			}
-			return new FollowUpResult(null, timerKey, false);
+			return new FollowUpResult(null, timerKey, FollowUpAction.NONE);
 		}
 
 		public static FollowUpResult requestCloseIfEmpty() {
-			return new FollowUpResult(null, null, true);
+			return new FollowUpResult(null, null, FollowUpAction.REQUEST_CLOSE_IF_EMPTY);
 		}
+	}
+
+	public enum FollowUpAction {
+		NONE,
+		REQUEST_CLOSE_IF_EMPTY,
+		ADD_QUICK_JOIN_CANDIDATE,
+		REMOVE_QUICK_JOIN_CANDIDATE
 	}
 
 	public record FollowUp(RoomJob nextJob, Duration delay, String timerKey) {

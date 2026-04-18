@@ -7,7 +7,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 
 public interface RoomService {
 
-	RoomSnapshot bootstrapRoom(String roomId, int roomType, String hostSessionId, int capacity);
+	RoomSnapshot bootstrapRoom(int roomType, String hostSessionId);
 
 	Optional<RoomSnapshot> findRoom(String roomId);
 
@@ -23,5 +23,4 @@ public interface RoomService {
 
 	RoomSubmitResult guessChat(String roomId, String sessionId, String text);
 
-	void closeRoom(String roomId);
 }

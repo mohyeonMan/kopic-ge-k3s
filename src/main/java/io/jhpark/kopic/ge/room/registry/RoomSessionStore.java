@@ -12,4 +12,10 @@ public interface RoomSessionStore {
 	void remove(String roomId);
 
 	boolean remove(String roomId, RoomSession expected);
+
+	Optional<String> findFirstAvailableQuickRoomId();
+
+	void addQuickJoinCandidate(String roomId);
+
+	void removeQuickJoinCandidate(String roomId);
 }
