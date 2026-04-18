@@ -10,7 +10,8 @@ import java.util.Map;
 import com.fasterxml.jackson.databind.JsonNode;
 
 public record RoomSnapshot(
-	String roomId,
+	String roomCode,
+	String hostSessionId,
 	int participantCount,
 	Map<String, Participant> participants,
 	List<JsonNode> currentCanvas
@@ -21,7 +22,8 @@ public record RoomSnapshot(
 			Collections.unmodifiableMap(new LinkedHashMap<>(room.getParticipants()));
 		List<JsonNode> copiedCanvas = List.copyOf(room.getCurrentCanvas());
 		return new RoomSnapshot(
-			room.getRoomId(),
+			room.getRoomCode(),
+			room.getHostSessionId(),
 			copiedParticipants.size(),
 			copiedParticipants,
 			copiedCanvas

@@ -4,12 +4,16 @@ import java.util.Optional;
 
 import com.fasterxml.jackson.databind.JsonNode;
 
+import io.jhpark.kopic.ge.room.dto.Room;
+
 
 public interface RoomService {
 
-	RoomSnapshot bootstrapRoom(int roomType, String hostSessionId);
+	Room bootstrapRoom(int roomType, String hostSessionId);
 
 	Optional<RoomSnapshot> findRoom(String roomId);
+
+	RoomSubmitResult createPrivateRoom(String sessionId, String nickname, String wsNodeId);
 
 	RoomSubmitResult privateJoin(String roomCode, String sessionId, String nickname, String wsNodeId);
 

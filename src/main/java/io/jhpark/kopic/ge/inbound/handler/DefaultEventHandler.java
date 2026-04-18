@@ -1,7 +1,12 @@
 package io.jhpark.kopic.ge.inbound.handler;
 
+import java.time.Instant;
+
+import org.springframework.stereotype.Component;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+
 import io.jhpark.kopic.ge.common.dto.KopicEnvelope;
 import io.jhpark.kopic.ge.common.util.EventMapper;
 import io.jhpark.kopic.ge.common.util.TimeFormatUtil;
@@ -10,10 +15,8 @@ import io.jhpark.kopic.ge.outbound.dto.GeEvent;
 import io.jhpark.kopic.ge.room.service.GeEventPublisher;
 import io.jhpark.kopic.ge.room.service.RoomService;
 import io.jhpark.kopic.ge.room.service.RoomSubmitResult;
-import java.time.Instant;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.stereotype.Component;
 
 @Slf4j
 @Component
@@ -49,6 +52,7 @@ public class DefaultEventHandler {
 		switch (event.envelope().e()) {
 			case 101 -> handleJoin(event);
 			case 102 -> handleLeave(event);
+			case 103 -> handleCreatePrivateRoom(event);
 			case 1102 -> handleSnapshot(event);
 			case 201 ->  handleStroke(event);
 			case 204 -> handleChat(event);
@@ -64,9 +68,26 @@ public class DefaultEventHandler {
 		}
 	}
 
+	private void handleCreatePrivateRoom(WsEvent event) {
+		JsonNode payload = event.envelope().p();
+		if (!validateRequired(event, payload, "nickname")) {
+			return;
+		}
+
+		String nickname = eventMapper.text(payload, "nickname");
+		RoomSubmitResult result = roomService.createPrivateRoom(
+			event.senderSessionId(),
+			nickname,
+			event.wsNodeId()
+		);
+		emitResult(event, result);
+	}
+
 	private void handleJoin(WsEvent event) {
 		JsonNode payload = event.envelope().p();
-		validateRequired(event, payload, "nickname");
+		if (!validateRequired(event, payload, "nickname")) {
+			return;
+		}
 
 		String roomCode = eventMapper.text(payload, "roomCode");
 		String nickname = eventMapper.text(payload, "nickname");
@@ -91,7 +112,9 @@ public class DefaultEventHandler {
 
 	private void handleLeave(WsEvent event) {
 		JsonNode payload = event.envelope().p();
-		validateRequired(event, payload, "roomId");
+		if (!validateRequired(event, payload, "roomId")) {
+			return;
+		}
 
 		String roomId = eventMapper.text(payload, "roomId");
 
@@ -101,7 +124,9 @@ public class DefaultEventHandler {
 
 	private void handleSnapshot(WsEvent event) {
 		JsonNode payload = event.envelope().p();
-		validateRequired(event, payload, "roomId");
+		if (!validateRequired(event, payload, "roomId")) {
+			return;
+		}
 
 		String roomId = eventMapper.text(payload, "roomId");
 
@@ -126,7 +151,9 @@ public class DefaultEventHandler {
 
 	private void handleChat(WsEvent event) {
 		JsonNode payload = event.envelope().p();
-		validateRequired(event, payload, "t");
+		if (!validateRequired(event, payload, "t")) {
+			return;
+		}
 
 		String text = eventMapper.text(payload, "t");
 		roomService.guessChat(
@@ -204,9 +231,10 @@ public class DefaultEventHandler {
 		return true;
 	}
 
-	private void validateRequired(WsEvent event, JsonNode payload, String... requiredFields) {
+	private boolean validateRequired(WsEvent event, JsonNode payload, String... requiredFields) {
 		try {
 			eventMapper.require(payload, requiredFields);
+			return true;
 		} catch (IllegalArgumentException illegalArgumentException) {
 			sendRejected(
 				event.senderSessionId(),
@@ -215,6 +243,7 @@ public class DefaultEventHandler {
 				"INVALID_REQUEST",
 				illegalArgumentException.getMessage()
 			);
+			return false;
 		}
 	}
 

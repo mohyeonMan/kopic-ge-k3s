@@ -23,6 +23,8 @@ public class InMemoryRoomSessionStore implements RoomSessionStore {
 			.thenComparing(QuickRoomRef::roomId);
 
 	private final Map<String, RoomSession> sessions = new ConcurrentHashMap<>();
+	private final Map<String, String> privateRoomCodeToRoomId = new ConcurrentHashMap<>();
+	private final Map<String, String> privateRoomIdToCode = new ConcurrentHashMap<>();
 	private final NavigableSet<QuickRoomRef> quickRoomIds = new TreeSet<>(QUICK_ROOM_ORDER);
 	private final Map<String, QuickRoomRef> quickRoomRefs = new HashMap<>();
 	private final Object quickRoomLock = new Object();
@@ -33,10 +35,38 @@ public class InMemoryRoomSessionStore implements RoomSessionStore {
 	}
 
 	@Override
+	public Optional<String> findRoomIdByPrivateCode(String roomCode) {
+		if (roomCode == null || roomCode.isBlank()) {
+			log.debug("private room lookup skipped due to blank roomCode");
+			return Optional.empty();
+		}
+		String roomId = privateRoomCodeToRoomId.get(roomCode);
+		if (roomId == null) {
+			log.info("private room lookup miss. roomCode={}", roomCode);
+			return Optional.empty();
+		}
+		if (!sessions.containsKey(roomId)) {
+			privateRoomCodeToRoomId.remove(roomCode, roomId);
+			privateRoomIdToCode.remove(roomId, roomCode);
+			log.warn(
+				"private room lookup found stale index and cleaned up. roomCode={}, roomId={}",
+				roomCode,
+				roomId
+			);
+			return Optional.empty();
+		}
+		log.info("private room lookup hit. roomCode={}, roomId={}", roomCode, roomId);
+		return Optional.of(roomId);
+	}
+
+	@Override
 	public void put(RoomSession session) {
 		Room room = session.getRoom();
 		String roomId = room.getRoomId();
 		sessions.put(roomId, session);
+		if (room.getRoomType() == Room.PRIVATE_ROOM_TYPE) {
+			indexPrivateRoom(room);
+		}
 		if (room.getRoomType() == Room.QUICK_ROOM_TYPE) {
 			addQuickJoinCandidate(roomId);
 		}
@@ -45,6 +75,7 @@ public class InMemoryRoomSessionStore implements RoomSessionStore {
 	@Override
 	public void remove(String roomId) {
 		sessions.remove(roomId);
+		removePrivateRoomIndex(roomId);
 		removeQuickJoinCandidate(roomId);
 	}
 
@@ -52,6 +83,7 @@ public class InMemoryRoomSessionStore implements RoomSessionStore {
 	public boolean remove(String roomId, RoomSession expected) {
 		boolean removed = sessions.remove(roomId, expected);
 		if (removed) {
+			removePrivateRoomIndex(roomId);
 			removeQuickJoinCandidate(roomId);
 		}
 		return removed;
@@ -157,6 +189,31 @@ public class InMemoryRoomSessionStore implements RoomSessionStore {
 			quickRoomIds.remove(ref);
 		}
 		return ref;
+	}
+
+	private void indexPrivateRoom(Room room) {
+		String roomCode = room.getRoomCode();
+		if (roomCode == null || roomCode.isBlank()) {
+			log.warn(
+				"private room index skipped due to blank roomCode. roomId={}, roomType={}",
+				room.getRoomId(),
+				room.getRoomType()
+			);
+			return;
+		}
+		privateRoomCodeToRoomId.put(roomCode, room.getRoomId());
+		privateRoomIdToCode.put(room.getRoomId(), roomCode);
+		log.info("private room indexed. roomCode={}, roomId={}", roomCode, room.getRoomId());
+	}
+
+	private void removePrivateRoomIndex(String roomId) {
+		String roomCode = privateRoomIdToCode.remove(roomId);
+		if (roomCode == null || roomCode.isBlank()) {
+			log.info("private room index remove skipped because room was not indexed. roomId={}", roomId);
+			return;
+		}
+		privateRoomCodeToRoomId.remove(roomCode, roomId);
+		log.info("private room index removed. roomCode={}, roomId={}", roomCode, roomId);
 	}
 
 	private String quickRoomIdsForLog() {

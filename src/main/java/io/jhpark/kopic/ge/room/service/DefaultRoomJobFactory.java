@@ -10,6 +10,8 @@ import io.jhpark.kopic.ge.room.dto.Room;
 import com.fasterxml.jackson.databind.JsonNode;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -95,6 +97,22 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 					}
 					log.info("participant removed from room. roomId={}, sessionId={}, beforeCount={}, afterCount={}",
 						room.getRoomId(), sessionId, beforeSize, participants.size());
+
+					String currentHostSessionId = null;
+					if (sessionId.equals(room.getHostSessionId()) && !participants.isEmpty()) {
+						Participant nextHost = selectNextHostParticipant(participants);
+						if (nextHost != null) {
+							currentHostSessionId = nextHost.sessionId();
+							room.transferHost(currentHostSessionId);
+							log.info(
+								"room host transferred after leave. roomId={}, previousHost={}, currentHost={}",
+								room.getRoomId(),
+								sessionId,
+								currentHostSessionId
+							);
+						}
+					}
+
 					boolean wasFull = room.getRoomType() == Room.QUICK_ROOM_TYPE
 						&& beforeSize >= room.getCapacity();
 					RoomJob.FollowUp followUp = null;
@@ -114,9 +132,12 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 						log.info("leave broadcast sent. roomId={}, leftSessionId={}, remainingParticipants={}",
 							room.getRoomId(), sessionId, participants.size());
 						for (Participant participant : participants.values()) {
-							sendToParticipant(participant, 302, Map.of(
-									"sessionId", sessionId,
-									"nickname", removed.nickname()));
+							Map<String, Object> payload = new HashMap<>();
+							payload.put("sid", sessionId);
+							if (currentHostSessionId != null) {
+								payload.put("nextHost", currentHostSessionId);
+							}
+							sendToParticipant(participant, 302, payload);
 						}
 					}
 					RoomJob.FollowUpAction followUpAction = wasFull
@@ -272,6 +293,29 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 			return RoomJob.FollowUpAction.REMOVE_QUICK_JOIN_CANDIDATE;
 		}
 		return RoomJob.FollowUpAction.ADD_QUICK_JOIN_CANDIDATE;
+	}
+
+	private Participant selectNextHostParticipant(Map<String, Participant> participants) {
+		return participants.values()
+			.stream()
+			.min(
+				Comparator
+					.comparing((Participant participant) -> parseJoinedAtOrMax(participant.joinedAt()))
+					.thenComparing(Participant::sessionId)
+			)
+			.orElse(null);
+	}
+
+	private Instant parseJoinedAtOrMax(String joinedAt) {
+		if (joinedAt == null || joinedAt.isBlank()) {
+			return Instant.MAX;
+		}
+		try {
+			return TimeFormatUtil.parse(joinedAt);
+		} catch (RuntimeException runtimeException) {
+			log.warn("failed to parse joinedAt for host selection. joinedAt={}", joinedAt, runtimeException);
+			return Instant.MAX;
+		}
 	}
 
 	private void sendToParticipant(Participant participant, int eventCode, Object payload) {

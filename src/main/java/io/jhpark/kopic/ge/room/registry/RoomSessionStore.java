@@ -7,6 +7,8 @@ public interface RoomSessionStore {
 
 	Optional<RoomSession> find(String roomId);
 
+	Optional<String> findRoomIdByPrivateCode(String roomCode);
+
 	void put(RoomSession session);
 
 	void remove(String roomId);
