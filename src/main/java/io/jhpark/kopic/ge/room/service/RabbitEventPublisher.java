@@ -11,14 +11,14 @@ import org.springframework.stereotype.Component;
 @Slf4j
 @Component
 @RequiredArgsConstructor
-public class RabbitEventPublisher implements OutboundBroadcaster {
+public class RabbitEventPublisher implements GeEventPublisher {
 
 	private final RabbitTemplate rabbitTemplate;
 	private final RabbitProperties rabbitProperties;
 	private final CommonMapper commonMapper;
 
 	@Override
-	public void send(String wsNodeId, GeEvent event) {
+	public void publish(String wsNodeId, GeEvent event) {
 		if (isBlank(wsNodeId) || event == null || isBlank(event.targetSessionId()) || event.envelope() == null) {
 			log.warn("skip event push due to missing target. wsNodeId={}, event={}", wsNodeId, event);
 			return;
@@ -32,7 +32,7 @@ public class RabbitEventPublisher implements OutboundBroadcaster {
 
 		String routingKey = rabbitProperties.outboundRoutingKey(wsNodeId);
 		rabbitTemplate.convertAndSend(rabbitProperties.outboundExchange(), routingKey, body);
-		log.info("event pushed. wsNodeId={}, targetSessionId={}, eventCode={}, routingKey={}",
+		log.debug("event pushed. wsNodeId={}, targetSessionId={}, eventCode={}, routingKey={}",
 			wsNodeId, event.targetSessionId(), event.envelope().e(), routingKey);
 	}
 

@@ -45,14 +45,6 @@ public class DefaultRoomService implements RoomService {
 	}
 
 	@Override
-	public boolean canJoin(String roomId, String sessionId) {
-		return sessionStore.find(roomId)
-			.map(RoomSession::getRoom)
-			.map(room -> !room.getParticipants().containsKey(sessionId))
-			.orElse(false);
-	}
-
-	@Override
 	public RoomSubmitResult privateJoin(String roomCode, String sessionId, String nickname, String wsNodeId) {
 		String roomId = "room-1";
 		bootstrapRoom(roomId, 1, sessionId, 10);
@@ -72,8 +64,8 @@ public class DefaultRoomService implements RoomService {
 	}
 
 	@Override
-	public RoomSubmitResult snapshot(String roomId, String sessionId, String requestId, String wsNodeId) {
-		return submit(roomId, roomJobFactory.snapshot(sessionId, requestId));
+	public RoomSubmitResult snapshot(String roomId, String sessionId, String wsNodeId) {
+		return submit(roomId, roomJobFactory.snapshot(sessionId));
 	}
 
 	private RoomSubmitResult submit(String roomId, RoomJob job) {

@@ -2,7 +2,8 @@ package io.jhpark.kopic.ge.room.service;
 
 import io.jhpark.kopic.ge.outbound.dto.GeEvent;
 
-public interface OutboundBroadcaster {
+public interface GeEventPublisher {
 
-	void send(String wsNodeId, GeEvent event);
+	void publish(String wsNodeId, GeEvent event);
+
 }

@@ -11,15 +11,13 @@ public interface RoomService {
 
 	Optional<RoomSnapshot> findRoom(String roomId);
 
-	boolean canJoin(String roomId, String sessionId);
-
 	RoomSubmitResult privateJoin(String roomCode, String sessionId, String nickname, String wsNodeId);
 
 	RoomSubmitResult quickJoin(String sessionId, String nickname, String wsNodeId);
 
 	RoomSubmitResult leave(String roomId, String sessionId, String wsNodeId);
 
-	RoomSubmitResult snapshot(String roomId, String sessionId, String requestId, String wsNodeId);
+	RoomSubmitResult snapshot(String roomId, String sessionId, String wsNodeId);
 
 	RoomSubmitResult drawStroke(String roomId, String sessionId, JsonNode stroke);
 

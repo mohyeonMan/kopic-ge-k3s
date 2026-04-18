@@ -10,7 +10,7 @@ public interface RoomJobFactory {
 
 	RoomJob leave(String sessionId);
 
-	RoomJob snapshot(String sessionId, String requestId);
+	RoomJob snapshot(String sessionId);
 
 	RoomJob closeIfEmpty();
 

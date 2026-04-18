@@ -7,7 +7,7 @@ import io.jhpark.kopic.ge.common.util.EventMapper;
 import io.jhpark.kopic.ge.common.util.TimeFormatUtil;
 import io.jhpark.kopic.ge.inbound.dto.WsEvent;
 import io.jhpark.kopic.ge.outbound.dto.GeEvent;
-import io.jhpark.kopic.ge.room.service.OutboundBroadcaster;
+import io.jhpark.kopic.ge.room.service.GeEventPublisher;
 import io.jhpark.kopic.ge.room.service.RoomService;
 import io.jhpark.kopic.ge.room.service.RoomSubmitResult;
 import java.time.Instant;
@@ -21,7 +21,7 @@ import org.springframework.stereotype.Component;
 public class DefaultEventHandler {
 
 	private final RoomService roomService;
-	private final OutboundBroadcaster roomBroadcaster;
+	private final GeEventPublisher geEventPublisher;
 	private final EventMapper eventMapper;
 
 	public void handle(WsEvent event) {
@@ -32,7 +32,7 @@ public class DefaultEventHandler {
 		}
 
 		if (event == null || event.envelope() == null) {
-			roomBroadcaster.send(
+			geEventPublisher.publish(
 				event.wsNodeId(),
 				new GeEvent(
 					event.senderSessionId(),
@@ -53,9 +53,10 @@ public class DefaultEventHandler {
 			case 201 ->  handleStroke(event);
 			case 204 -> handleChat(event);
 			default -> {
-				emitRejected(
+				sendRejected(
 					event.senderSessionId(),
 					event.wsNodeId(),
+					1999,
 					"UNSUPPORTED_EVENT",
 					"unsupported event code: " + event.envelope().e()
 				);
@@ -100,15 +101,13 @@ public class DefaultEventHandler {
 
 	private void handleSnapshot(WsEvent event) {
 		JsonNode payload = event.envelope().p();
-		validateRequired(event, payload, "roomId", "requestId");
+		validateRequired(event, payload, "roomId");
 
 		String roomId = eventMapper.text(payload, "roomId");
-		String requestId = eventMapper.text(payload, "requestId");
 
 		RoomSubmitResult result = roomService.snapshot(
 			roomId,
 			event.senderSessionId(),
-			requestId,
 			event.wsNodeId()
 		);
 		emitResult(event, result);
@@ -143,17 +142,19 @@ public class DefaultEventHandler {
 		if (!(result instanceof RoomSubmitResult.Rejected rejected)) {
 			return;
 		}
-		emitRejected(
+		sendRejected(
 			event.senderSessionId(),
 			event.wsNodeId(),
+			1999,
 			rejected.reason().name(),
 			rejected.message()
 		);
 	}
 
-	private void emitRejected(
+	private void sendRejected(
 		String sessionId,
 		String wsNodeId,
+		int errorEventCode,
 		String reason,
 		String message
 	) {
@@ -161,12 +162,12 @@ public class DefaultEventHandler {
 			log.warn("event rejected without session target. reason={}, message={}", reason, message);
 			return;
 		}
-		roomBroadcaster.send(
+		geEventPublisher.publish(
 			wsNodeId,
 			new GeEvent(
 				sessionId,
 				new KopicEnvelope(
-					1999,
+					errorEventCode,
 					rejectedPayload(reason, message)
 				),
 				Instant.now().toString()
@@ -207,16 +208,14 @@ public class DefaultEventHandler {
 		try {
 			eventMapper.require(payload, requiredFields);
 		} catch (IllegalArgumentException illegalArgumentException) {
-			emitRejected(
+			sendRejected(
 				event.senderSessionId(),
 				event.wsNodeId(),
+				1999,
 				"INVALID_REQUEST",
 				illegalArgumentException.getMessage()
 			);
 		}
 	}
-
-	
-	
 
 }
