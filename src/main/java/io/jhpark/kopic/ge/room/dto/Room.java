@@ -5,6 +5,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import lombok.Getter;
@@ -24,6 +25,7 @@ public final class Room {
 	private final int roomType;
 	private final int capacity;
 	private volatile String hostSessionId;
+	private volatile Setting setting;
 	private final Map<String, Participant> participants = new ConcurrentHashMap<>();
 	private final Instant createdAt;
 	private final List<JsonNode> currentCanvas = new ArrayList<>();
@@ -35,6 +37,7 @@ public final class Room {
 		this.capacity = Room.DEFAULT_ROOM_CAPACITY;
 		this.createdAt = Instant.now();
 		this.hostSessionId = hostSessionId;
+		this.setting = Setting.defaultValue();
 	}
 
 	public static String newRoomId() {
@@ -47,5 +50,9 @@ public final class Room {
 
 	public void transferHost(String nextHostSessionId) {
 		this.hostSessionId = nextHostSessionId;
+	}
+
+	public void updateSetting(Setting setting) {
+		this.setting = Objects.requireNonNull(setting, "setting");
 	}
 }

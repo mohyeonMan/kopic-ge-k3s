@@ -6,6 +6,7 @@ import io.jhpark.kopic.ge.common.util.TimeFormatUtil;
 import io.jhpark.kopic.ge.outbound.dto.GeEvent;
 import io.jhpark.kopic.ge.room.dto.Participant;
 import io.jhpark.kopic.ge.room.dto.Room;
+import io.jhpark.kopic.ge.room.dto.Setting;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import java.time.Duration;
@@ -319,7 +320,9 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	}
 
 	private void sendToParticipant(Participant participant, int eventCode, Object payload) {
-		JsonNode payloadNode = commonMapper.rawMapper().valueToTree(payload);
+		JsonNode payloadNode = payload instanceof JsonNode jsonNode
+			? jsonNode
+			: commonMapper.rawMapper().valueToTree(payload);
 
 		geEventPublisher.publish(
 				participant.wsNodeId(),
@@ -346,6 +349,53 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 						TimeFormatUtil.now()
 				)
 		);
+	}
+
+	@Override
+	public RoomJob updateSetting(String requestedSessionId, JsonNode settingPayload) {
+		return new RoomJob(
+			room -> {
+				Participant requestedParticipant = room.getParticipants().get(requestedSessionId);
+				if (requestedParticipant == null) {
+					return RoomJob.FollowUpResult.none();
+				}
+
+				if(requestedParticipant.sessionId() != room.getHostSessionId()) {
+					sendErrorToParticipant(
+						requestedParticipant,
+						1999,
+						"FORBIDDEN",
+						"only host can update game setting"
+					);
+					return RoomJob.FollowUpResult.none();
+				}
+
+				try {
+					Setting parsedSetting = Setting.fromPayload(settingPayload);
+					room.updateSetting(parsedSetting);
+				} catch (IllegalArgumentException illegalArgumentException) {
+					sendErrorToParticipant(
+						requestedParticipant,
+						1999,
+						"INVALID_REQUEST",
+						illegalArgumentException.getMessage()
+					);
+					return RoomJob.FollowUpResult.none();
+				}
+
+				for (Participant participant : room.getParticipants().values()) {
+					if(!participant.sessionId().equals(requestedSessionId)) {
+						sendToParticipant(participant, 107, settingPayload);
+					}
+				}
+				return RoomJob.FollowUpResult.none();
+			}
+		);
+	}
+
+	@Override
+	public RoomJob startGame(String sessionId) {
+		return notImplemented("startGame");
 	}
 
 }

@@ -53,6 +53,8 @@ public class DefaultEventHandler {
 			case 101 -> handleJoin(event);
 			case 102 -> handleLeave(event);
 			case 103 -> handleCreatePrivateRoom(event);
+			case 107 -> handleSetting(event);
+			case 200 -> handleGameStart(event);
 			case 1102 -> handleSnapshot(event);
 			case 201 ->  handleStroke(event);
 			case 204 -> handleChat(event);
@@ -247,4 +249,28 @@ public class DefaultEventHandler {
 		}
 	}
 
+	private void handleGameStart(WsEvent event) {
+		JsonNode payload = event.envelope().p();
+		if (!validateRequired(event, payload, "roomId")) {
+			return;
+		}
+
+		String roomId = eventMapper.text(payload, "roomId");
+
+		roomService.startGame(
+				roomId,
+				event.senderSessionId()
+			);
+
+	}
+
+	private void handleSetting(WsEvent event) {
+		RoomSubmitResult result = roomService.updateSetting(
+			event.roomId(),
+			event.senderSessionId(),
+			event.envelope().p()
+		);
+		emitResult(event, result);
+
+	}
 }

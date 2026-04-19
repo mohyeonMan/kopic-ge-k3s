@@ -27,4 +27,7 @@ public interface RoomService {
 
 	RoomSubmitResult guessChat(String roomId, String sessionId, String text);
 
+	RoomSubmitResult startGame(String roomId, String sessionId);
+
+	RoomSubmitResult updateSetting(String roomId, String sessionId, JsonNode settingPayload);
 }

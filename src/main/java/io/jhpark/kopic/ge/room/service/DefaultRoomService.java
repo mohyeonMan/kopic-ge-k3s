@@ -146,4 +146,15 @@ public class DefaultRoomService implements RoomService {
 		return value == null || value.isBlank();
 	}
 
+
+	@Override
+	public RoomSubmitResult updateSetting(String roomId, String sessionId, JsonNode settingPayload) {
+		return submit(roomId, roomJobFactory.updateSetting(sessionId, settingPayload));
+	}
+
+	@Override
+	public RoomSubmitResult startGame(String roomId, String sessionId) {
+		return submit(roomId, roomJobFactory.startGame(sessionId));	
+	}
+
 }

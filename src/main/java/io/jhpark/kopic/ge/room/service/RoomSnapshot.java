@@ -12,6 +12,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 public record RoomSnapshot(
 	String roomCode,
 	String hostSessionId,
+	List<Integer> settings,
 	int participantCount,
 	Map<String, Participant> participants,
 	List<JsonNode> currentCanvas
@@ -24,6 +25,7 @@ public record RoomSnapshot(
 		return new RoomSnapshot(
 			room.getRoomCode(),
 			room.getHostSessionId(),
+			room.getSetting().toPayload(),
 			copiedParticipants.size(),
 			copiedParticipants,
 			copiedCanvas
