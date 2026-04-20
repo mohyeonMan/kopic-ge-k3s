@@ -113,14 +113,7 @@ public class DefaultEventHandler {
 	}
 
 	private void handleLeave(WsEvent event) {
-		JsonNode payload = event.envelope().p();
-		if (!validateRequired(event, payload, "roomId")) {
-			return;
-		}
-
-		String roomId = eventMapper.text(payload, "roomId");
-
-		RoomSubmitResult result = roomService.leave(roomId, event.senderSessionId(), event.wsNodeId());
+		RoomSubmitResult result = roomService.leave(event.roomId(), event.senderSessionId(), event.wsNodeId());
 		emitResult(event, result);
 	}
 
