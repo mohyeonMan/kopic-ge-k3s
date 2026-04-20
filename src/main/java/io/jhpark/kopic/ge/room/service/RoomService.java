@@ -21,11 +21,11 @@ public interface RoomService {
 
 	RoomSubmitResult leave(String roomId, String sessionId, String wsNodeId);
 
-	RoomSubmitResult snapshot(String roomId, String sessionId, String wsNodeId);
-
 	RoomSubmitResult drawStroke(String roomId, String sessionId, JsonNode stroke);
 
 	RoomSubmitResult guessChat(String roomId, String sessionId, String text);
+
+	RoomSubmitResult explicitWordChoice(String roomId, String sessionId, int choiceIndex);
 
 	RoomSubmitResult startGame(String roomId, String sessionId);
 

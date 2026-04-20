@@ -26,6 +26,7 @@ public final class Room {
 	private final int capacity;
 	private volatile String hostSessionId;
 	private volatile Setting setting;
+	private volatile Game game;
 	private final Map<String, Participant> participants = new ConcurrentHashMap<>();
 	private final Instant createdAt;
 	private final List<JsonNode> currentCanvas = new ArrayList<>();
@@ -54,5 +55,13 @@ public final class Room {
 
 	public void updateSetting(Setting setting) {
 		this.setting = Objects.requireNonNull(setting, "setting");
+	}
+
+	public void startGame(Game game) {
+		this.game = Objects.requireNonNull(game, "game");
+	}
+
+	public void endGame() {
+		this.game = null;
 	}
 }

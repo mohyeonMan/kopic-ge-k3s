@@ -108,11 +108,6 @@ public class DefaultRoomService implements RoomService {
 		return submit(roomId, roomJobFactory.leave(sessionId));
 	}
 
-	@Override
-	public RoomSubmitResult snapshot(String roomId, String sessionId, String wsNodeId) {
-		return submit(roomId, roomJobFactory.snapshot(sessionId));
-	}
-
 	private RoomSubmitResult submit(String roomId, RoomJob job) {
 		return roomRunner.submit(roomId, job);
 	}
@@ -127,6 +122,11 @@ public class DefaultRoomService implements RoomService {
 		return submit(roomId, roomJobFactory.guessChat(sessionId, text));
 	}
 
+	@Override
+	public RoomSubmitResult explicitWordChoice(String roomId, String sessionId, int choiceIndex) {
+		return submit(roomId, roomJobFactory.explicitWordChoice(sessionId, choiceIndex));
+	}
+
 	private Room newRoom(int roomType, String hostSessionId) {
 		if (roomType != Room.PRIVATE_ROOM_TYPE) {
 			return new Room(roomType, hostSessionId);
@@ -135,7 +135,9 @@ public class DefaultRoomService implements RoomService {
 		for (int retry = 0; retry < PRIVATE_ROOM_CODE_MAX_RETRY; retry++) {
 			Room room = new Room(roomType, hostSessionId);
 			String roomCode = room.getRoomCode();
-			if (sessionStore.findRoomIdByPrivateCode(roomCode).isEmpty()) {
+			if (sessionStore.findRoomIdByPrivateCode(roomCode).isEmpty()
+				&& sessionStore.find(room.getRoomId()).isEmpty()
+			) {
 				return room;
 			}
 		}

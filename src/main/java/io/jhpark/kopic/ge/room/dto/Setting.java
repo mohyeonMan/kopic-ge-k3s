@@ -56,6 +56,19 @@ public record Setting(
 		return value.asInt();
 	}
 
+	public Setting copy() {
+		return new Setting(
+			roundCount,
+			drawSec,
+			wordChoiceSec,
+			wordChoiceCount,
+			hintRevealSec,
+			hintLetterCount,
+			drawerOrderMode,
+			endMode
+		);
+	}
+
 	public List<Integer> toPayload() {
 		return List.of(
 			roundCount,

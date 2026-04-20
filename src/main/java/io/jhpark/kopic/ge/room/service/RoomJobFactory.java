@@ -1,6 +1,5 @@
 package io.jhpark.kopic.ge.room.service;
 
-import java.util.Map;
 
 import com.fasterxml.jackson.databind.JsonNode;
 
@@ -10,17 +9,11 @@ public interface RoomJobFactory {
 
 	RoomJob leave(String sessionId);
 
-	RoomJob snapshot(String sessionId);
-
 	RoomJob closeIfEmpty();
 
-	RoomJob updateGameSettings(String requestedSessionId, Map<String, Object> settings);
+	RoomJob nextRound();
 
-	RoomJob gameStart(String requestedSessionId);
-
-	RoomJob startRound(int roundNo);
-
-	RoomJob startWordChoiceTurn(int roundNo, int turnCursor);
+	RoomJob nextTurn();
 
 	RoomJob openWordChoiceWindow(String expectedTurnId);
 

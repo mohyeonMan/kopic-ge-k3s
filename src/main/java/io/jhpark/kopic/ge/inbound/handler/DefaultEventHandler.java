@@ -55,7 +55,8 @@ public class DefaultEventHandler {
 			case 103 -> handleCreatePrivateRoom(event);
 			case 107 -> handleSetting(event);
 			case 200 -> handleGameStart(event);
-			case 1102 -> handleSnapshot(event);
+			case 203 -> handleWordChoice(event);
+			// case 1102 -> handleSnapshot(event);
 			case 201 ->  handleStroke(event);
 			case 204 -> handleChat(event);
 			default -> {
@@ -117,21 +118,21 @@ public class DefaultEventHandler {
 		emitResult(event, result);
 	}
 
-	private void handleSnapshot(WsEvent event) {
-		JsonNode payload = event.envelope().p();
-		if (!validateRequired(event, payload, "roomId")) {
-			return;
-		}
+	// private void handleSnapshot(WsEvent event) {
+	// 	JsonNode payload = event.envelope().p();
+	// 	if (!validateRequired(event, payload, "roomId")) {
+	// 		return;
+	// 	}
 
-		String roomId = eventMapper.text(payload, "roomId");
+	// 	String roomId = eventMapper.text(payload, "roomId");
 
-		RoomSubmitResult result = roomService.snapshot(
-			roomId,
-			event.senderSessionId(),
-			event.wsNodeId()
-		);
-		emitResult(event, result);
-	}
+	// 	RoomSubmitResult result = roomService.snapshot(
+	// 		roomId,
+	// 		event.senderSessionId(),
+	// 		event.wsNodeId()
+	// 	);
+	// 	emitResult(event, result);
+	// }
 
 	private void handleStroke(WsEvent event){
 
@@ -158,6 +159,44 @@ public class DefaultEventHandler {
 		);
 
 		log.info(event.toString());
+	}
+
+	private void handleWordChoice(WsEvent event) {
+		JsonNode payload = event.envelope().p();
+		if (!validateRequired(event, payload, "choiceIndex")) {
+			return;
+		}
+
+		JsonNode choiceIndexNode = payload.path("choiceIndex");
+		if (!choiceIndexNode.canConvertToInt()) {
+			sendRejected(
+				event.senderSessionId(),
+				event.wsNodeId(),
+				1999,
+				"INVALID_REQUEST",
+				"choiceIndex must be int"
+			);
+			return;
+		}
+		int choiceIndex = choiceIndexNode.asInt(-1);
+		if (choiceIndex < 0) {
+			sendRejected(
+				event.senderSessionId(),
+				event.wsNodeId(),
+				1999,
+				"INVALID_REQUEST",
+				"choiceIndex must be zero or positive"
+			);
+			return;
+		}
+
+		// 타이머 취소/페이즈 전환 순서를 보장하기 위해 룸 액터로 위임한다.
+		RoomSubmitResult result = roomService.explicitWordChoice(
+			event.roomId(),
+			event.senderSessionId(),
+			choiceIndex
+		);
+		emitResult(event, result);
 	}
 
 	private void emitResult(WsEvent event, RoomSubmitResult result) {
@@ -250,10 +289,11 @@ public class DefaultEventHandler {
 
 		String roomId = eventMapper.text(payload, "roomId");
 
-		roomService.startGame(
-				roomId,
-				event.senderSessionId()
-			);
+		RoomSubmitResult result = roomService.startGame(
+			roomId,
+			event.senderSessionId()
+		);
+		emitResult(event, result);
 
 	}
 
