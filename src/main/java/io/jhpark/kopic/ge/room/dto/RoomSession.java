@@ -73,11 +73,11 @@ public final class RoomSession {
 		ScheduledFuture<?> existing = timers.remove(timerKey);
 		if (existing != null) {
 			boolean cancelled = existing.cancel(false);
-			log.info("room timer cancelled. roomId={}, timerKey={}, cancelled={}",
+			log.debug("room timer cancelled. roomId={}, timerKey={}, cancelled={}",
 				room.getRoomId(), timerKey, cancelled);
 			return;
 		}
-		log.info("room timer cancel skipped because timer was not found. roomId={}, timerKey={}",
+		log.debug("room timer cancel skipped because timer was not found. roomId={}, timerKey={}",
 			room.getRoomId(), timerKey);
 	}
 

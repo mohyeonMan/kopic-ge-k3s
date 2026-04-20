@@ -42,7 +42,7 @@ public class InMemoryRoomSessionStore implements RoomSessionStore {
 		}
 		String roomId = privateRoomCodeToRoomId.get(roomCode);
 		if (roomId == null) {
-			log.info("private room lookup miss. roomCode={}", roomCode);
+			log.warn("private room lookup miss. roomCode={}", roomCode);
 			return Optional.empty();
 		}
 		if (!sessions.containsKey(roomId)) {
@@ -55,7 +55,7 @@ public class InMemoryRoomSessionStore implements RoomSessionStore {
 			);
 			return Optional.empty();
 		}
-		log.info("private room lookup hit. roomCode={}, roomId={}", roomCode, roomId);
+		log.debug("private room lookup hit. roomCode={}, roomId={}", roomCode, roomId);
 		return Optional.of(roomId);
 	}
 
@@ -110,7 +110,7 @@ public class InMemoryRoomSessionStore implements RoomSessionStore {
 				}
 
 				if (room.getParticipants().size() < room.getCapacity()) {
-					log.info(
+					log.debug(
 						"quick join candidate selected. roomId={}, quickJoinIds={}",
 						roomId,
 						quickRoomIdsForLog()
@@ -118,7 +118,7 @@ public class InMemoryRoomSessionStore implements RoomSessionStore {
 					return Optional.of(roomId);
 				}
 			}
-			log.info("no quick join candidate available. quickJoinIds={}", quickRoomIdsForLog());
+			log.warn("no quick join candidate available. quickJoinIds={}", quickRoomIdsForLog());
 		}
 		return Optional.empty();
 	}
@@ -141,7 +141,7 @@ public class InMemoryRoomSessionStore implements RoomSessionStore {
 		}
 		synchronized (quickRoomLock) {
 			if (quickRoomRefs.containsKey(roomId)) {
-				log.info(
+				log.debug(
 					"quick join candidate already indexed. roomId={}, quickJoinIds={}",
 					roomId,
 					quickRoomIdsForLog()
@@ -149,7 +149,7 @@ public class InMemoryRoomSessionStore implements RoomSessionStore {
 				return;
 			}
 			insertQuickRoomSorted(room);
-			log.info(
+			log.debug(
 				"quick join candidate added. roomId={}, quickJoinIds={}",
 				roomId,
 				quickRoomIdsForLog()
@@ -162,14 +162,14 @@ public class InMemoryRoomSessionStore implements RoomSessionStore {
 		synchronized (quickRoomLock) {
 			QuickRoomRef removed = removeFromQuickRoomIndex(roomId);
 			if (removed == null) {
-				log.info(
+				log.debug(
 					"quick join candidate remove skipped because room was not indexed. roomId={}, quickJoinIds={}",
 					roomId,
 					quickRoomIdsForLog()
 				);
 				return;
 			}
-			log.info(
+			log.debug(
 				"quick join candidate removed. roomId={}, quickJoinIds={}",
 				roomId,
 				quickRoomIdsForLog()
@@ -203,17 +203,17 @@ public class InMemoryRoomSessionStore implements RoomSessionStore {
 		}
 		privateRoomCodeToRoomId.put(roomCode, room.getRoomId());
 		privateRoomIdToCode.put(room.getRoomId(), roomCode);
-		log.info("private room indexed. roomCode={}, roomId={}", roomCode, room.getRoomId());
+		log.debug("private room indexed. roomCode={}, roomId={}", roomCode, room.getRoomId());
 	}
 
 	private void removePrivateRoomIndex(String roomId) {
 		String roomCode = privateRoomIdToCode.remove(roomId);
 		if (roomCode == null || roomCode.isBlank()) {
-			log.info("private room index remove skipped because room was not indexed. roomId={}", roomId);
+			log.debug("private room index remove skipped because room was not indexed. roomId={}", roomId);
 			return;
 		}
 		privateRoomCodeToRoomId.remove(roomCode, roomId);
-		log.info("private room index removed. roomCode={}, roomId={}", roomCode, roomId);
+		log.debug("private room index removed. roomCode={}, roomId={}", roomCode, roomId);
 	}
 
 	private String quickRoomIdsForLog() {
