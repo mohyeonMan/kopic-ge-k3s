@@ -3,6 +3,7 @@ package io.jhpark.kopic.ge.room.dto;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -21,7 +22,7 @@ public class Game {
     private String gameId;
     private Setting gameSetting;
     private GamePhase gamePhase;
-    private Map<String, Integer> totalPoints;
+    private LinkedHashMap<String, Integer> totalPoints;
     private Instant startedAt;
     
     // 라운드 상태
@@ -34,117 +35,99 @@ public class Game {
     private String curTurnId;
     private int curTurnIndex;
     private TurnPhase turnPhase;
-    private List<String> words;
+    private List<String> wordCandidates;
     private String answerWord;
     private String curDrawerSid;
     private Map<String, Integer> earnedPoints;
 
-    public static Game start(Setting gameSetting, List<String> participantSids) {
+    private Game(List<Participant> participants){
+        this.gameId = newId(GAME_ID_PREFIX);
+        this.gameSetting = gameSetting.copy();
+        this.gamePhase = GamePhase.PLAYING;
+        this.totalPoints = new LinkedHashMap<>();
+        this.startedAt = Instant.now();
+    }
+    
+    public static Game start(Setting gameSetting, List<Participant> participants) {
         Objects.requireNonNull(gameSetting, "gameSetting");
-        Objects.requireNonNull(participantSids, "participantSids");
-        if (participantSids.isEmpty()) {
+        Objects.requireNonNull(participants, "participantSids");
+        if (participants.size() < 2) {
             throw new IllegalArgumentException("participantSids must not be empty");
         }
 
-        Game game = new Game();
-        game.gameId = newId(GAME_ID_PREFIX);
-        game.gameSetting = gameSetting.copy();
-        game.gamePhase = GamePhase.PLAYING;
-        game.totalPoints = new HashMap<>();
-        game.startedAt = Instant.now();
+        return new Game(participants);
 
-        game.curRoundIndex = 0;
-        game.curRoundId = null;
-        game.roundPhase = RoundPhase.STARTING;
-        game.curRoundDrawerSids = List.of();
-
-        game.curTurnId = newId(TURN_ID_PREFIX);
-        game.curTurnIndex = 0;
-        game.turnPhase = TurnPhase.STARTING;
-        game.words = List.of();
-        game.answerWord = null;
-        game.curDrawerSid = null;
-        game.earnedPoints = new HashMap<>();
-
-        for (String participantSid : participantSids) {
-            game.totalPoints.put(participantSid, 0);
-        }
-        return game;
     }
 
-    public void startRound(int roundNo, List<String> roundDrawerSids) {
-        if (roundNo <= 0) {
-            throw new IllegalArgumentException("roundNo must be positive");
-        }
-        Objects.requireNonNull(roundDrawerSids, "roundDrawerSids");
-        if (roundDrawerSids.isEmpty()) {
-            throw new IllegalArgumentException("roundDrawerSids must not be empty");
-        }
+    public void startRound(List<Participant> participants) {
 
-        this.curRoundIndex = roundNo;
+        int nextRoundIndex = curRoundIndex + 1;
+
+        if(nextRoundIndex < 1 || nextRoundIndex > this.gameSetting.roundCount())
+            throw new IllegalArgumentException("roundIndex out of range");
+
+        this.curRoundIndex = nextRoundIndex;
         this.curRoundId = newId(ROUND_ID_PREFIX);
-        this.roundPhase = RoundPhase.PLAYING;
-        this.curRoundDrawerSids = List.copyOf(roundDrawerSids);
+        this.roundPhase = RoundPhase.STARTING;
+        this.curRoundDrawerSids = new ArrayList<>();
 
-        this.curTurnId = newId(TURN_ID_PREFIX); 
-        this.curTurnIndex = 0;
-        this.turnPhase = TurnPhase.STARTING;
-        this.words = List.of();
-        this.answerWord = null;
-        this.curDrawerSid = this.curRoundDrawerSids.get(this.curTurnIndex);
-        this.earnedPoints = new HashMap<>();
-
-        for (String participantSid : this.curRoundDrawerSids) {
-            this.totalPoints.putIfAbsent(participantSid, 0);
+        for(Participant participant : participants){
+            curRoundDrawerSids.add(participant.sessionId());
         }
+
     }
 
-    public void startTurn(int turnIndex) {
-        if (this.curRoundDrawerSids == null || this.curRoundDrawerSids.isEmpty()) {
-            throw new IllegalStateException("curRoundDrawerSids must not be empty");
-        }
-        if (turnIndex < 0 || turnIndex >= this.curRoundDrawerSids.size()) {
-            throw new IllegalArgumentException("turnIndex out of range");
-        }
+    public void startTurn() {
 
-        // 새 턴은 단어 선택 전 상태를 초기화한 뒤 시작한다.
-        this.curTurnIndex = turnIndex;
+        if(this.turnPhase != TurnPhase.TURN_RESULT)
+            throw new IllegalArgumentException("previous turn not finished");
+
+        int nextTurnIndex = curTurnIndex + 1;
+
+        if (nextTurnIndex < 1 || nextTurnIndex >= this.curRoundDrawerSids.size()) 
+            throw new IllegalArgumentException("turnIndex out of range");
+        
+
+        this.curTurnIndex = nextTurnIndex;
         this.curTurnId = newId(TURN_ID_PREFIX);
         this.turnPhase = TurnPhase.STARTING;
-        this.curDrawerSid = this.curRoundDrawerSids.get(turnIndex);
-        this.words = List.of();
+        this.curDrawerSid = this.curRoundDrawerSids.get(curTurnIndex);
+        this.wordCandidates = List.of();
         this.answerWord = null;
         this.earnedPoints = new HashMap<>();
     }
 
-    public void openWordChoice(List<String> words) {
+    public void openWordCandidate(List<String> words) {
         Objects.requireNonNull(words, "words");
-        if (words.isEmpty()) {
-            throw new IllegalArgumentException("words must not be empty");
-        }
-        // 재시도된 잡에서도 같은 턴에서 단어 선택 창을 다시 열 수 있게 허용한다.
-        if (this.turnPhase != TurnPhase.STARTING && this.turnPhase != TurnPhase.WORD_CHOICE) {
-            throw new IllegalStateException("turnPhase must be STARTING or WORD_CHOICE");
-        }
 
-        this.words = List.copyOf(words);
+        if(this.turnPhase != TurnPhase.STARTING)
+            throw new IllegalArgumentException("can't choose word this phase");
+
+        if (words.isEmpty() || words.size() != this.gameSetting.wordChoiceCount()) 
+            throw new IllegalArgumentException("illegal word counts");
+        
+        this.wordCandidates = List.copyOf(words);
         this.answerWord = null;
         this.turnPhase = TurnPhase.WORD_CHOICE;
     }
 
-    public void startDrawing(int choiceIndex) {
+    public void startDrawing(String sessionId,int choiceIndex) {
+        if(sessionId != curDrawerSid)
+            throw new IllegalArgumentException("not a current drawer");
+
+
         if (this.turnPhase != TurnPhase.WORD_CHOICE) {
             throw new IllegalStateException("turnPhase must be WORD_CHOICE");
         }
-        if (this.words == null || this.words.isEmpty()) {
+        if (this.wordCandidates == null || this.wordCandidates.isEmpty()) {
             throw new IllegalStateException("words must not be empty");
         }
-        if (choiceIndex < 0 || choiceIndex >= this.words.size()) {
+        if (choiceIndex < 0 || choiceIndex >= this.wordCandidates.size()) {
             throw new IllegalArgumentException("choiceIndex out of range");
         }
 
         // 단어가 선택되면 정답을 확정하고 DRAWING 단계로 진입한다.
-        this.answerWord = this.words.get(choiceIndex);
+        this.answerWord = this.wordCandidates.get(choiceIndex);
         this.turnPhase = TurnPhase.DRAWING;
     }
 
@@ -160,6 +143,13 @@ public class Game {
         return this.curTurnIndex + 1 < this.curRoundDrawerSids.size();
     }
 
+    public boolean hasNextRound() {
+        if (this.gameSetting == null) {
+            return false;
+        }
+        return this.curRoundIndex < this.gameSetting.roundCount();
+    }
+
     public boolean isPlaying() {
         return gamePhase == GamePhase.PLAYING;
     }
@@ -173,45 +163,41 @@ public class Game {
             return;
         }
 
-        this.totalPoints.remove(sessionId);
-        this.earnedPoints.remove(sessionId);
+        if (this.totalPoints != null) {
+            this.totalPoints.remove(sessionId);
+        }
+        if (this.earnedPoints != null) {
+            this.earnedPoints.remove(sessionId);
+        }
+        if (this.curRoundDrawerSids == null || this.curRoundDrawerSids.isEmpty()) {
+            return;
+        }
 
-        curRoundDrawerSids.remove(sessionId);
-        
-        // if (this.curRoundDrawerSids == null || this.curRoundDrawerSids.isEmpty()) {
-        //     return;
-        // }
+        int removedIndex = this.curRoundDrawerSids.indexOf(sessionId);
+        if (removedIndex < 0) {
+            return;
+        }
 
-        
-        // int removedIndex = this.curRoundDrawerSids.indexOf(sessionId);
-        // if (removedIndex < 0) {
-        //     return;
-        // }
+        this.curRoundDrawerSids.remove(removedIndex);
 
+        if (this.curRoundDrawerSids.isEmpty()) {
+            this.curTurnIndex = -1;
+            return;
+        }
 
-        // List<String> nextDrawerSids = new ArrayList<>(this.curRoundDrawerSids);
-        // nextDrawerSids.remove(removedIndex);
-        // this.curRoundDrawerSids = List.copyOf(nextDrawerSids);
+        if (removedIndex < this.curTurnIndex) {
+            this.curTurnIndex -= 1;
+            return;
+        }
 
-        // if (this.curRoundDrawerSids.isEmpty()) {
-        //     this.curDrawerSid = null;
-        //     this.curTurnIndex = 0;
-        //     return;
-        // }
+        if (removedIndex == this.curTurnIndex) {
+            this.curTurnIndex -= 1;
+            return;
+        }
 
-        // if (sessionId.equals(this.curDrawerSid)) {
-        //     int nextTurnIndex = Math.min(removedIndex, this.curRoundDrawerSids.size() - 1);
-        //     this.curTurnIndex = Math.max(0, nextTurnIndex);
-        //     this.curDrawerSid = this.curRoundDrawerSids.get(this.curTurnIndex);
-        //     return;
-        // }
-
-        // if (removedIndex < this.curTurnIndex) {
-        //     this.curTurnIndex = this.curTurnIndex - 1;
-        // }
-        // if (this.curTurnIndex >= this.curRoundDrawerSids.size()) {
-        //     this.curTurnIndex = this.curRoundDrawerSids.size() - 1;
-        // }
+        if (this.curTurnIndex >= this.curRoundDrawerSids.size()) {
+            this.curTurnIndex = this.curRoundDrawerSids.size() - 1;
+        }
     }
 
     private static String newId(String prefix) {

@@ -158,7 +158,6 @@ public class DefaultEventHandler {
 			text
 		);
 
-		log.info(event.toString());
 	}
 
 	private void handleWordChoice(WsEvent event) {
