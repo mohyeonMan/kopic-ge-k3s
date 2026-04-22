@@ -75,11 +75,15 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	public RoomJob join(String sessionId, String nickname, String wsNodeId) {
 		return new RoomJob(
 				room -> {
+					// 1) 입장 요청 로그를 남기고, 세션/정원 검증부터 진행한다.
+					// 2) 검증 통과 시 참가자를 방 상태에 반영한다.
+					// 3) 신규 참가자에게는 스냅샷(408), 기존 참가자에게는 입장 알림(301)을 전송한다.
+					// 4) 마지막으로 close-if-empty 타이머 취소 및 퀵조인 후보 동기화 액션을 반환한다.
 
 					log.info("join requested. roomId={}, sessionId={}, nickname={}", room.getRoomId(), sessionId,
 							nickname);
 
-					// 검증
+					// 같은 세션이 이미 방에 있으면 중복 입장으로 간주해 즉시 종료한다.
 					if (room.getParticipants().containsKey(sessionId)) {
 						log.warn("session already exists. roomId={}, sessionId={}", room.getRoomId(), sessionId);
 						return RoomJob.FollowUpResult.none();
@@ -93,19 +97,22 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 					);
 					
 					Map<String, Participant> participants = room.getParticipants();
+					// 정원 초과인 경우 참가자 추가 없이 에러 이벤트만 응답한다.
 					if (participants.size() >= room.getCapacity()) {
 						sendErrorToParticipant(newParticipant, 1999, "ROOM_FULL", "room is full");
 						return RoomJob.FollowUpResult.none();
 					}
 
-						participants.put(sessionId, newParticipant);
-						sendToParticipant(newParticipant, 408, Map.of(
-							"sid", sessionId,
-							"rid", room.getRoomId(),
-							"snap", RoomSnapshot.from(room)));
+					// 방 상태에 참가자를 반영한 뒤, 입장자 본인에게 최신 스냅샷을 전달한다.
+					participants.put(sessionId, newParticipant);
+					sendToParticipant(newParticipant, 408, Map.of(
+						"sid", sessionId,
+						"rid", room.getRoomId(),
+						"snap", RoomSnapshot.from(room)));
 
 					log.info("joined participant. roomId={}, sessionId={}, nickname={}", room.getRoomId(), sessionId,
 							nickname);
+					// 새 참가자 정보를 방의 모든 참가자에게 브로드캐스트한다.
 					for (Participant participant : participants.values()) {
 						sendToParticipant(participant, 301, Map.of(
 								"sessionId", sessionId,
@@ -114,9 +121,33 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 
 					log.info("current room participants: {}", room.getParticipants().keySet());
 
-					RoomJob.FollowUpAction followUpAction = resolveQuickJoinCandidateAction(room);
+					// 입장으로 인해 비어있지 않게 되었으므로 close-if-empty 타이머는 취소 대상으로 반환한다.
+					RoomJob.FollowUp followUp = null;
+					boolean shouldAutoStartQuickGame =
+						room.getRoomType() == Room.QUICK_ROOM_TYPE
+							&& room.getGame() == null
+							&& room.getParticipants().size() >= 2;
+					if (shouldAutoStartQuickGame) {
+						log.info(
+							"quick room auto start scheduled after join. roomId={}, triggerSessionId={}, participantCount={}",
+							room.getRoomId(),
+							sessionId,
+							room.getParticipants().size()
+						);
+						followUp = new RoomJob.FollowUp(
+							startGame(null),
+							null,
+							null
+						);
+					}
+					RoomJob.FollowUpAction followUpAction = 
+						room.getRoomType() == Room.QUICK_ROOM_TYPE &&
+						room.getParticipants().size() >= room.getCapacity() ?
+						RoomJob.FollowUpAction.REMOVE_QUICK_JOIN_CANDIDATE :
+						RoomJob.FollowUpAction.NONE;
+
 					return new RoomJob.FollowUpResult(
-						null,
+						followUp,
 						CLOSE_IF_EMPTY_TIMER_KEY,
 						followUpAction
 					);
@@ -133,11 +164,15 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	public RoomJob leave(String sessionId) {
 		return new RoomJob(
 			room -> {
+				// 1) 참가자를 제거하고, 없는 세션이면 즉시 종료한다.
+				// 2) 빈 방이면 게임/호스트 상태를 정리하고 close-if-empty만 예약한다.
+				// 3) 비어있지 않으면 방장 이양, 게임 보정, leave 브로드캐스트를 처리한다.
 				log.info("leave requested. roomId={}, sessionId={}", room.getRoomId(), sessionId);
 
 				Map<String, Participant> participants = room.getParticipants();
 				int beforeSize = participants.size();
 
+				// 방에 없는 세션의 퇴장은 무시한다.
 				Participant removed = participants.remove(sessionId);
 				if (removed == null) {
 					log.warn("leave ignored because session was not in room. roomId={}, sessionId={}",
@@ -147,42 +182,43 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 				log.info("participant removed from room. roomId={}, sessionId={}, beforeCount={}, afterCount={}",
 					room.getRoomId(), sessionId, beforeSize, participants.size());
 
-				Game game = room.getGame();
-				RoomJob.FollowUp forcedTurnEndFollowUp = null;
-				String cancelTimerKey = null;
-				if (game != null) {
-					boolean wasCurrentDrawer = sessionId.equals(game.getCurDrawerSid());
-					Game.TurnPhase turnPhase = game.getTurnPhase();
-					String currentTurnId = game.getCurTurnId();
-					game.removeParticipant(sessionId);
+				boolean isQuickRoom = room.getRoomType() == Room.QUICK_ROOM_TYPE;
+				boolean wasFull = room.getRoomType() == Room.QUICK_ROOM_TYPE
+					&& beforeSize >= room.getCapacity();
 
-					if (game.isPlaying()
-						&& wasCurrentDrawer
-						&& turnPhase != Game.TurnPhase.TURN_RESULT
-						&& !isBlank(currentTurnId)
-					) {
-						forcedTurnEndFollowUp = new RoomJob.FollowUp(
-							turnEnd(currentTurnId, "DRAWER_LEFT"),
-							null,
-							null
-						);
-						if (turnPhase == Game.TurnPhase.WORD_CHOICE) {
-							cancelTimerKey = WORD_CHOICE_TIMER_KEY;
-						} else if (turnPhase == Game.TurnPhase.DRAWING) {
-							cancelTimerKey = DRAWING_TIMER_KEY;
-						}
-						log.info(
-							"drawer left during active turn. roomId={}, turnId={}, turnPhase={}, forcedEndReason={}",
-							room.getRoomId(),
-							currentTurnId,
-							turnPhase,
-							"DRAWER_LEFT"
-						);
+				// 빈 방이 되면 다른 진행 로직은 생략하고 종료 예약만 남긴다.
+				if (participants.isEmpty()) {
+					Game game = room.getGame();
+					String cancelTimerKey = null;
+					if (game != null) {
+						// stale game 상태를 남기지 않도록 게임/타이머를 같이 정리한다.
+						cancelTimerKey = resolveGameTimerCancelKeyForLeave(game);
+						game.removeParticipant(sessionId);
+						room.endGame();
 					}
+					room.transferHost(null);
+					room.getCurrentCanvas().clear();
+					log.info(
+						"room became empty after leave. roomId={}, sessionId={}, closeDelaySeconds={}",
+						room.getRoomId(),
+						sessionId,
+						CLOSE_IF_EMPTY_DELAY.toSeconds()
+					);
+					return new RoomJob.FollowUpResult(
+						new RoomJob.FollowUp(
+							closeIfEmpty(),
+							CLOSE_IF_EMPTY_DELAY,
+							CLOSE_IF_EMPTY_TIMER_KEY
+						),
+						cancelTimerKey,
+						isQuickRoom
+							? RoomJob.FollowUpAction.REMOVE_QUICK_JOIN_CANDIDATE
+							: RoomJob.FollowUpAction.NONE
+					);
 				}
 
 				String currentHostSessionId = null;
-				if (sessionId.equals(room.getHostSessionId()) && !participants.isEmpty()) {
+				if (sessionId.equals(room.getHostSessionId())) {
 					Participant nextHost = selectNextHostParticipant(participants);
 					if (nextHost != null) {
 						currentHostSessionId = nextHost.sessionId();
@@ -196,36 +232,57 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 					}
 				}
 
-				boolean wasFull = room.getRoomType() == Room.QUICK_ROOM_TYPE
-					&& beforeSize >= room.getCapacity();
+				Game game = room.getGame();
 				RoomJob.FollowUp followUp = null;
-				if (participants.isEmpty()) {
-					log.info(
-						"room became empty after leave. roomId={}, sessionId={}, closeDelaySeconds={}",
-						room.getRoomId(),
-						sessionId,
-						CLOSE_IF_EMPTY_DELAY.toSeconds()
-					);
-					followUp = new RoomJob.FollowUp(
-						closeIfEmpty(),
-						CLOSE_IF_EMPTY_DELAY,
-						CLOSE_IF_EMPTY_TIMER_KEY
-					);
-				} else {
-					log.info("leave broadcast sent. roomId={}, leftSessionId={}, remainingParticipants={}",
-						room.getRoomId(), sessionId, participants.size());
-					for (Participant participant : participants.values()) {
-						Map<String, Object> payload = new HashMap<>();
-						payload.put("sid", sessionId);
-						if (currentHostSessionId != null) {
-							payload.put("nextHost", currentHostSessionId);
-						}
-						sendToParticipant(participant, 302, payload);
-					}
-					if (forcedTurnEndFollowUp != null) {
-						followUp = forcedTurnEndFollowUp;
+				String cancelTimerKey = null;
+				if (game != null) {
+					boolean wasCurrentDrawer = sessionId.equals(game.getCurDrawerSid());
+					Game.TurnPhase turnPhase = game.getTurnPhase();
+					String currentTurnId = game.getCurTurnId();
+					game.removeParticipant(sessionId);
+
+					// 게임은 2명 이상에서만 유지한다.
+					if (participants.size() < 2) {
+						cancelTimerKey = resolveGameTimerCancelKeyForLeave(game);
+						room.endGame();
+						room.getCurrentCanvas().clear();
+						log.info(
+							"game ended because participant count dropped below minimum. roomId={}, remainingParticipants={}",
+							room.getRoomId(),
+							participants.size()
+						);
+					} else if (game.isPlaying()
+						&& wasCurrentDrawer
+						&& turnPhase != Game.TurnPhase.TURN_RESULT
+						&& !isBlank(currentTurnId)
+					) {
+						followUp = new RoomJob.FollowUp(
+							turnEnd(currentTurnId, "DRAWER_LEFT"),
+							null,
+							null
+						);
+						cancelTimerKey = resolveTurnTimerCancelKey(turnPhase);
+						log.info(
+							"drawer left during active turn. roomId={}, turnId={}, turnPhase={}, forcedEndReason={}",
+							room.getRoomId(),
+							currentTurnId,
+							turnPhase,
+							"DRAWER_LEFT"
+						);
 					}
 				}
+
+				log.info("leave broadcast sent. roomId={}, leftSessionId={}, remainingParticipants={}",
+					room.getRoomId(), sessionId, participants.size());
+				for (Participant participant : participants.values()) {
+					Map<String, Object> payload = new HashMap<>();
+					payload.put("sid", sessionId);
+					if (currentHostSessionId != null) {
+						payload.put("nextHost", currentHostSessionId);
+					}
+					sendToParticipant(participant, 302, payload);
+				}
+
 				RoomJob.FollowUpAction followUpAction = wasFull
 					? RoomJob.FollowUpAction.ADD_QUICK_JOIN_CANDIDATE
 					: RoomJob.FollowUpAction.NONE;
@@ -241,6 +298,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	public RoomJob closeIfEmpty() {
 		return new RoomJob(
 				room -> {
+					// 타이머 실행 시점에 참가자가 비어 있는지 최종 확인한다.
 					if (!room.getParticipants().isEmpty()) {
 						log.info("close-if-empty skipped in job. roomId={}, participantCount={}",
 							room.getRoomId(), room.getParticipants().size());
@@ -260,58 +318,54 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	public RoomJob startGame(String sessionId) {
 		return new RoomJob(
 			room -> {
+				// 시작 권한과 최소 인원 등을 검증한 뒤 게임을 생성하고 라운드 시작을 예약한다.
+				boolean isQuickRoom = room.getRoomType() == Room.QUICK_ROOM_TYPE;
 				Participant requestedParticipant = resolveParticipant(room, sessionId);
-				if (requestedParticipant == null) {
+				if (!isQuickRoom && requestedParticipant == null) {
 					return RoomJob.FollowUpResult.none();
 				}
 
 				// 방장만 게임시작 가능.
-				if (rejectIfNotHost(room, requestedParticipant, "only host can start game")) {
+				if (!isQuickRoom && rejectIfNotHost(room, requestedParticipant, "only host can start game")) {
 					return RoomJob.FollowUpResult.none();
 				}
 
 				// 2명이상일때 시작가능.
 				if (room.getParticipants().size() < 2) {
-					sendErrorToParticipant(
-						requestedParticipant,
-						1999,
-						"INVALID_REQUEST",
-						"at least 2 participants required to start game"
-					);
+					if (requestedParticipant != null) {
+						sendErrorToParticipant(
+							requestedParticipant,
+							1999,
+							"INVALID_REQUEST",
+							"at least 2 participants required to start game"
+						);
+					}
 					return RoomJob.FollowUpResult.none();
 				}
 
 				
 				Game currentGame = room.getGame();
 				if (currentGame != null) {
-					sendErrorToParticipant(
-						requestedParticipant,
-						1999,
-						"CONFLICT",
-						"game is already active"
-					);
+					if (requestedParticipant != null) {
+						sendErrorToParticipant(
+							requestedParticipant,
+							1999,
+							"CONFLICT",
+							"game is already active"
+						);
+					}
 					return RoomJob.FollowUpResult.none();
 				}
 
 				List<Participant> gameParticipants = resolveParticipantsInJoinOrder(room);
-				if (gameParticipants.isEmpty()) {
-					sendErrorToParticipant(
-						requestedParticipant,
-						1999,
-						"INVALID_REQUEST",
-						"no participants available to start game"
-					);
-					return RoomJob.FollowUpResult.none();
-				}
 
 				Game newGame = Game.start(room.getSetting().copy(), gameParticipants);
 				room.startGame(newGame);
 				room.getCurrentCanvas().clear();
 
-				Map<String, Object> payload = new HashMap<>();
-				payload.put("sid", sessionId);
-				payload.put("gid", newGame.getGameId());
-				payload.put("settings", newGame.getGameSetting().toPayload());
+				Map<String, String> payload = Map.of(
+					"gid", newGame.getGameId()
+				);
 
 				for (Participant participant : room.getParticipants().values()) {
 					sendToParticipant(participant, 200, payload); // 게임 시작 알림
@@ -344,6 +398,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	public RoomJob nextRound() {
 		return new RoomJob(
 			room -> {
+				// 다음 라운드를 열고 라운드 시작 이벤트를 전파한 뒤 턴 준비로 이동한다.
 				Game game = resolveActivePlayingGame(room);
 				if (game == null) {
 					return RoomJob.FollowUpResult.none();
@@ -358,7 +413,6 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 					);
 					return RoomJob.FollowUpResult.none();
 				}
-				int nextRoundNo = game.getCurRoundIndex() + 1;
 
 					game.startRound(resolveRoundParticipants(room));
 					room.getCurrentCanvas().clear();
@@ -367,9 +421,6 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 				payload.put("gid", game.getGameId());
 				payload.put("round", game.getCurRoundIndex());
 				payload.put("roundId", game.getCurRoundId());
-				payload.put("turn", game.getCurTurnId());
-				payload.put("turnIndex", game.getCurTurnIndex());
-				payload.put("drawerSid", game.getCurDrawerSid());
 				payload.put("drawerSids", game.getCurRoundDrawerSids());
 
 				for (Participant participant : room.getParticipants().values()) {
@@ -402,6 +453,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	public RoomJob nextTurn() {
 		return new RoomJob(
 			room -> {
+				// 턴 메타데이터를 준비하고 단어 선택 단계로 전환한다.
 				Game game = resolveActivePlayingGame(room);
 				if (game == null) {
 					return RoomJob.FollowUpResult.none();
@@ -422,6 +474,12 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 						game.getCurTurnIndex(),
 						game.getCurRoundDrawerSids().size(),
 						runtimeException
+					);
+					broadcastErrorToAll(
+						room,
+						1999,
+						"TURN_TRANSITION_FAILED",
+						"failed to start next turn"
 					);
 					return RoomJob.FollowUpResult.none();
 				}
@@ -455,6 +513,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	public RoomJob openWordChoiceWindow(String expectedTurnId) {
 		return new RoomJob(
 			room -> {
+				// 턴 정합성을 확인한 뒤 단어 후보를 만들고 선택 창 타이머를 건다.
 				Game game = resolveActivePlayingGame(room);
 				if (game == null) {
 					return RoomJob.FollowUpResult.none();
@@ -528,6 +587,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	public RoomJob explicitWordChoice(String sessionId, int choiceIndex) {
 		return new RoomJob(
 			room -> {
+				// 현재 drawer의 수동 단어 선택 요청을 검증하고 드로잉 단계로 넘긴다.
 				Participant chooser = resolveParticipant(room, sessionId);
 				if (chooser == null) {
 					return RoomJob.FollowUpResult.none();
@@ -580,6 +640,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	public RoomJob wordChoiceTimeout(String expectedTurnId) {
 		return new RoomJob(
 			room -> {
+				// 단어 선택 시간이 지나면 후보 중 하나를 자동 선택한다.
 				Game game = resolveActivePlayingGame(room);
 				if (game == null) {
 					return RoomJob.FollowUpResult.none();
@@ -619,6 +680,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	public RoomJob drawingTimeout(String expectedTurnId) {
 		return new RoomJob(
 			room -> {
+				// 드로잉 시간이 종료되면 현재 턴을 결과 단계로 마무리한다.
 				Game game = resolveActivePlayingGame(room);
 				if (game == null) {
 					return RoomJob.FollowUpResult.none();
@@ -655,6 +717,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	public RoomJob turnEnd(String expectedTurnId, String endReason) {
 		return new RoomJob(
 			room -> {
+				// 턴 결과를 확정/전파하고 다음 액션(nextTurn/nextRound/gameEnd)을 결정한다.
 				Game game = resolveActivePlayingGame(room);
 				if (game == null) {
 					return RoomJob.FollowUpResult.none();
@@ -696,9 +759,11 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 					nextJob = nextTurn();
 					nextAction = "nextTurn";
 				} else if (game.hasNextRound()) {
+					game.finishRoundResult();
 					nextJob = nextRound();
 					nextAction = "nextRound";
 				} else {
+					game.finishRoundResult();
 					nextJob = gameEnd();
 					nextAction = "gameEnd";
 				}
@@ -732,6 +797,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	 */
 	@Override
 	public RoomJob roundEnd(int expectedRoundNo) {
+		// 아직 미구현 상태이므로 공통 no-op 핸들러로 위임한다.
 		return notImplemented("roundEnd");
 	}
 
@@ -741,6 +807,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	 */
 	@Override
 	public RoomJob gameEnd() {
+		// 아직 미구현 상태이므로 공통 no-op 핸들러로 위임한다.
 		return notImplemented("gameEnd");
 	}
 
@@ -750,6 +817,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	 */
 	@Override
 	public RoomJob resultViewEnd() {
+		// 아직 미구현 상태이므로 공통 no-op 핸들러로 위임한다.
 		return notImplemented("resultViewEnd");
 	}
 
@@ -762,6 +830,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	public RoomJob drawStroke(String sessionId, JsonNode stroke) {
 		return new RoomJob(
 				room -> {
+					// 스트로크를 캔버스에 반영하고 송신자를 제외한 참가자에게 전달한다.
 					if (stroke != null && stroke.isArray()) {
 						boolean clearCanvas = stroke.size() > 0
 							&& stroke.get(0).canConvertToInt()
@@ -796,6 +865,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 		return new RoomJob(
 			room -> {
 				// 방에 없는 세션이면 채팅/정답 판정을 진행하지 않는다.
+				// 일반 채팅과 정답 판정을 분기해 점수/턴 종료 조건을 처리한다.
 				Participant sender = resolveParticipant(room, sessionId);
 				if (sender == null) {
 					return RoomJob.FollowUpResult.none();
@@ -876,6 +946,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	 * 발신자를 제외한 모든 참가자에게 일반 채팅 이벤트(204)를 전파한다.
 	 */
 	private void broadcastChatToAllExceptSender(Room room, String sessionId, String text) {
+		// 송신자를 제외한 전체에게 일반 채팅 이벤트를 보낸다.
 		for (Participant participant : room.getParticipants().values()) {
 			if (!participant.sessionId().equals(sessionId)) {
 				sendToParticipant(participant, 204, Map.of(
@@ -892,6 +963,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	 * 힌트/정답 노출을 막기 위한 비공개 채팅 경로에서 사용한다.
 	 */
 	private void broadcastSealedChat(Room room, Game game, String sessionId, String text) {
+		// drawer와 정답자에게만 보이는 비공개 채팅을 전송한다.
 		for (Participant participant : room.getParticipants().values()) {
 			if (participant.sessionId().equals(sessionId)) {
 				continue;
@@ -921,6 +993,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 		String selectionReason
 	) {
 		// 단어 직접 선택/시간초과 선택 모두 이 경로에서 DRAWING으로 전환한다.
+		// 선택된 단어로 DRAWING 단계에 진입하고 공통 상태/타이머를 세팅한다.
 		game.startDrawing(game.getCurDrawerSid(), choiceIndex);
 		int drawSec = normalizePositiveSeconds(game.getGameSetting().drawSec(), 40);
 
@@ -973,6 +1046,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	 */
 	private List<String> resolveWordChoices(int requestedCount) {
 		// 외부 사전 공급자가 붙기 전까지 임시 단어 풀을 사용한다.
+		// 요청 개수만큼 후보 단어를 섞어서 반환한다.
 		int targetCount = requestedCount <= 0 ? 1 : requestedCount;
 		List<String> pool = new ArrayList<>(DEFAULT_WORD_POOL);
 		Collections.shuffle(pool);
@@ -991,6 +1065,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	 * 0 이하 값은 defaultValue로 대체하고, 양수면 원본 값을 그대로 반환한다.
 	 */
 	private int normalizePositiveSeconds(int seconds, int defaultValue) {
+		// 0 이하 값은 기본값으로 치환해 타이머 입력을 안전하게 만든다.
 		if (seconds <= 0) {
 			return defaultValue;
 		}
@@ -998,10 +1073,48 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	}
 
 	/**
+	 * leave 처리 중 게임 상태에 맞는 취소 타이머 키를 계산한다.
+	 * 아직 라운드 진입 전이라 turnPhase가 비어 있으면 start-round 타이머를 취소 대상으로 본다.
+	 */
+	private String resolveGameTimerCancelKeyForLeave(Game game) {
+		if (game == null) {
+			return null;
+		}
+		Game.TurnPhase turnPhase = game.getTurnPhase();
+		if (turnPhase == null) {
+			return START_ROUND_TIMER_KEY;
+		}
+		if (turnPhase == Game.TurnPhase.WORD_CHOICE) {
+			return WORD_CHOICE_TIMER_KEY;
+		}
+		if (turnPhase == Game.TurnPhase.DRAWING) {
+			return DRAWING_TIMER_KEY;
+		}
+		if (turnPhase == Game.TurnPhase.TURN_RESULT) {
+			return TURN_RESULT_TIMER_KEY;
+		}
+		return null;
+	}
+
+	/**
+	 * drawer 이탈 강제 종료 시 turn phase에 대응하는 타이머 키를 계산한다.
+	 */
+	private String resolveTurnTimerCancelKey(Game.TurnPhase turnPhase) {
+		if (turnPhase == Game.TurnPhase.WORD_CHOICE) {
+			return WORD_CHOICE_TIMER_KEY;
+		}
+		if (turnPhase == Game.TurnPhase.DRAWING) {
+			return DRAWING_TIMER_KEY;
+		}
+		return null;
+	}
+
+	/**
 	 * 현재 방의 활성 게임을 조회한다.
 	 * 게임이 없거나 PLAYING 상태가 아니면 경고 로그를 남기고 null을 반환한다.
 	 */
 	private Game resolveActivePlayingGame(Room room) {
+		// 방의 게임이 PLAYING 상태인지 확인하고 아니면 null을 반환한다.
 		Game game = room.getGame();
 		if (game == null || !game.isPlaying()) {
 			log.warn("room job ignored because game is not active. roomId={}", room.getRoomId());
@@ -1015,6 +1128,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	 * room 또는 sessionId가 비정상이면 null을 반환한다.
 	 */
 	private Participant resolveParticipant(Room room, String sessionId) {
+		// room/sessionId 유효성을 확인한 뒤 참가자를 조회한다.
 		if (room == null || isBlank(sessionId)) {
 			return null;
 		}
@@ -1027,6 +1141,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	 * 방장이면 false 반환한다.
 	 */
 	private boolean rejectIfNotHost(Room room, Participant participant, String message) {
+		// 요청자가 방장이 아니면 에러를 보내고 거절한다.
 		if (participant == null) {
 			return true;
 		}
@@ -1047,6 +1162,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	 * drawer가 아니면 FORBIDDEN 에러를 전송하고 true(거절) 반환한다.
 	 */
 	private boolean rejectIfNotCurrentDrawer(Game game, Participant participant, String message) {
+		// 요청자가 현재 턴의 drawer가 아니면 에러를 보내고 거절한다.
 		if (game == null || participant == null) {
 			return true;
 		}
@@ -1067,6 +1183,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	 * EndMode.TIME_OR_ALL_CORRECT 판정에 사용된다.
 	 */
 	private boolean allGuessersSolved(Room room, Game game) {
+		// drawer를 제외한 모든 참가자가 정답 처리됐는지 계산한다.
 		int requiredGuessers = 0;
 		int solvedGuessers = 0;
 		for (Participant participant : room.getParticipants().values()) {
@@ -1088,6 +1205,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	 * null 또는 공백 문자열인지 판별한다.
 	 */
 	private boolean isBlank(String value) {
+		// null 또는 공백 문자열 여부를 확인한다.
 		return value == null || value.isBlank();
 	}
 
@@ -1096,6 +1214,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	 * trim + 소문자 변환으로 비교 노이즈를 줄인다.
 	 */
 	private String normalizeText(String value) {
+		// 정답 비교용으로 trim + 소문자 정규화를 수행한다.
 		if (value == null) {
 			return "";
 		}
@@ -1109,23 +1228,10 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	private RoomJob notImplemented(String jobName) {
 		return new RoomJob(
 				room -> {
+					// 미구현 잡은 경고 로그만 남기고 no-op으로 종료한다.
 					log.warn("room job not implemented yet. job={}, roomId={}", jobName, room.getRoomId());
 					return RoomJob.FollowUpResult.none();
 				});
-	}
-
-	/**
-	 * 퀵조인 후보군 후속 액션을 계산한다.
-	 * 퀵룸이 아니면 NONE, 정원이 가득 찼으면 REMOVE, 아니면 ADD를 반환한다.
-	 */
-	private RoomJob.FollowUpAction resolveQuickJoinCandidateAction(Room room) {
-		if (room.getRoomType() != Room.QUICK_ROOM_TYPE) {
-			return RoomJob.FollowUpAction.NONE;
-		}
-		if (room.getParticipants().size() >= room.getCapacity()) {
-			return RoomJob.FollowUpAction.REMOVE_QUICK_JOIN_CANDIDATE;
-		}
-		return RoomJob.FollowUpAction.ADD_QUICK_JOIN_CANDIDATE;
 	}
 
 	/**
@@ -1133,6 +1239,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	 * 동률일 때는 sessionId 오름차순으로 안정 정렬한다.
 	 */
 	private List<Participant> resolveParticipantsInJoinOrder(Room room) {
+		// 참가자를 입장 시각 기준으로 정렬해 게임 기본 순서를 만든다.
 		return room.getParticipants()
 			.values()
 			.stream()
@@ -1149,6 +1256,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	 * 기본은 입장순이며, 설정이 RANDOM이면 셔플한 순서를 반환한다.
 	 */
 	private List<Participant> resolveRoundParticipants(Room room) {
+		// 라운드 drawer 순서를 만들고 RANDOM 설정이면 셔플한다.
 		List<Participant> participants = new ArrayList<>(resolveParticipantsInJoinOrder(room));
 		if (room.getSetting().drawerOrderMode() == DrawerOrderMode.RANDOM) {
 			Collections.shuffle(participants);
@@ -1161,6 +1269,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	 * 현재 참가자 중 가장 먼저 입장한 사용자를 우선한다.
 	 */
 	private Participant selectNextHostParticipant(Map<String, Participant> participants) {
+		// 가장 먼저 입장한 참가자를 다음 방장으로 선택한다.
 		return participants.values()
 			.stream()
 			.min(
@@ -1176,6 +1285,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	 * 파싱 실패 시 정렬 우선순위를 뒤로 보내기 위해 Instant.MAX를 반환한다.
 	 */
 	private Instant parseJoinedAtOrMax(String joinedAt) {
+		// joinedAt 파싱 실패 시 정렬에서 뒤로 가도록 Instant.MAX를 사용한다.
 		if (joinedAt == null || joinedAt.isBlank()) {
 			return Instant.MAX;
 		}
@@ -1192,6 +1302,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	 * payload가 JsonNode가 아니면 mapper로 변환 후 envelope(eventCode)로 감싸 전송한다.
 	 */
 	private void sendToParticipant(Participant participant, int eventCode, Object payload) {
+		// payload를 JsonNode로 변환해 단일 참가자에게 이벤트를 발행한다.
 		JsonNode payloadNode = payload instanceof JsonNode jsonNode
 			? jsonNode
 			: commonMapper.rawMapper().valueToTree(payload);
@@ -1209,6 +1320,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	 * reason/message를 표준 에러 payload로 구성해 지정된 errorEventCode로 발행한다.
 	 */
 	private void sendErrorToParticipant(Participant participant, int errorEventCode, String reason, String message) {
+		// reason/message 구조의 에러 이벤트를 단일 참가자에게 발행한다.
 		geEventPublisher.publish(
 				participant.wsNodeId(),
 				new GeEvent(
@@ -1232,10 +1344,23 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	 * 요청자가 방장인지 확인하고 payload를 Setting으로 파싱해 방 설정을 갱신한다.
 	 * 성공 시 요청자를 제외한 참가자에게 설정 변경 이벤트(107)를 전파한다.
 	 */
+	/**
+	 * 방의 모든 참가자에게 동일한 에러 이벤트를 전송한다.
+	 */
+	private void broadcastErrorToAll(Room room, int errorEventCode, String reason, String message) {
+		if (room == null) {
+			return;
+		}
+		for (Participant participant : room.getParticipants().values()) {
+			sendErrorToParticipant(participant, errorEventCode, reason, message);
+		}
+	}
+
 	@Override
 	public RoomJob updateSetting(String requestedSessionId, JsonNode settingPayload) {
 		return new RoomJob(
 			room -> {
+				// 방장 요청만 허용해 설정을 갱신하고 다른 참가자에게 변경 이벤트를 전파한다.
 				Participant requestedParticipant = resolveParticipant(room, requestedSessionId);
 				if (requestedParticipant == null) {
 					return RoomJob.FollowUpResult.none();

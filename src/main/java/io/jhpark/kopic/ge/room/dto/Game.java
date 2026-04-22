@@ -40,12 +40,23 @@ public class Game {
     private String curDrawerSid;
     private Map<String, Integer> earnedPoints;
 
-    private Game(List<Participant> participants){
+    private Game(Setting gameSetting, List<Participant> participants){
         this.gameId = newId(GAME_ID_PREFIX);
         this.gameSetting = gameSetting.copy();
         this.gamePhase = GamePhase.PLAYING;
         this.totalPoints = new LinkedHashMap<>();
         this.startedAt = Instant.now();
+        this.curRoundIndex = 0;
+        this.curRoundId = null;
+        this.roundPhase = RoundPhase.STARTING;
+        this.curRoundDrawerSids = List.of();
+        this.curTurnId = null;
+        this.curTurnIndex = -1;
+        this.turnPhase = TurnPhase.TURN_RESULT;
+        this.wordCandidates = List.of();
+        this.answerWord = null;
+        this.curDrawerSid = null;
+        this.earnedPoints = new HashMap<>();
     }
     
     public static Game start(Setting gameSetting, List<Participant> participants) {
@@ -55,11 +66,15 @@ public class Game {
             throw new IllegalArgumentException("participantSids must not be empty");
         }
 
-        return new Game(participants);
+        return new Game(gameSetting, participants);
 
     }
 
     public void startRound(List<Participant> participants) {
+        Objects.requireNonNull(participants, "participants");
+        if (participants.isEmpty()) {
+            throw new IllegalArgumentException("participants must not be empty");
+        }
 
         int nextRoundIndex = curRoundIndex + 1;
 
@@ -75,6 +90,15 @@ public class Game {
             curRoundDrawerSids.add(participant.sessionId());
         }
 
+        // 라운드가 시작되면 턴 시드는 초기 상태로 리셋한다.
+        this.curTurnId = null;
+        this.curTurnIndex = -1;
+        this.turnPhase = TurnPhase.TURN_RESULT;
+        this.wordCandidates = List.of();
+        this.answerWord = null;
+        this.curDrawerSid = null;
+        this.earnedPoints = new HashMap<>();
+
     }
 
     public void startTurn() {
@@ -84,13 +108,14 @@ public class Game {
 
         int nextTurnIndex = curTurnIndex + 1;
 
-        if (nextTurnIndex < 1 || nextTurnIndex >= this.curRoundDrawerSids.size()) 
+        if (nextTurnIndex < 0 || nextTurnIndex >= this.curRoundDrawerSids.size()) 
             throw new IllegalArgumentException("turnIndex out of range");
         
 
         this.curTurnIndex = nextTurnIndex;
         this.curTurnId = newId(TURN_ID_PREFIX);
         this.turnPhase = TurnPhase.STARTING;
+        this.roundPhase = RoundPhase.PLAYING;
         this.curDrawerSid = this.curRoundDrawerSids.get(curTurnIndex);
         this.wordCandidates = List.of();
         this.answerWord = null;
@@ -133,6 +158,10 @@ public class Game {
 
     public void finishTurnResult() {
         this.turnPhase = TurnPhase.TURN_RESULT;
+    }
+
+    public void finishRoundResult() {
+        this.roundPhase = RoundPhase.ROUND_RESULT;
     }
 
     public boolean hasNextTurn() {
