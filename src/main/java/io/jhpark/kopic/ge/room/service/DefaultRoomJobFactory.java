@@ -611,21 +611,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 					return RoomJob.FollowUpResult.none();
 				}
 
-				if(game.getTurnPhase() != TurnPhase.WORD_CHOICE){
-					log.info("can't start round");
-					return RoomJob.FollowUpResult.none();
-				}
-
 				if (rejectIfNotCurrentDrawer(game, chooser, "only current drawer can choose word")) {
-					return RoomJob.FollowUpResult.none();
-				}
-				if (choiceIndex < 0 || choiceIndex >= game.getWordCandidates().size()) {
-					sendErrorToParticipant(
-						chooser,
-						1999,
-						"INVALID_REQUEST",
-						"choiceIndex out of range"
-					);
 					return RoomJob.FollowUpResult.none();
 				}
 
@@ -658,19 +644,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 					);
 					return RoomJob.FollowUpResult.none();
 				}
-				if (game.getTurnPhase() != Game.TurnPhase.WORD_CHOICE || game.getWordCandidates().isEmpty()) {
-					log.debug(
-						"wordChoiceTimeout ignored because turn is not in word-choice phase. roomId={}, turnId={}, turnPhase={}",
-						room.getRoomId(),
-						game.getCurTurnId(),
-						game.getTurnPhase()
-					);
-					return RoomJob.FollowUpResult.none();
-				}
-
-				// 선택 시간 내 입력이 없으면 후보 중 하나를 강제로 선택한다.
-				int autoChoiceIndex = ThreadLocalRandom.current().nextInt(game.getWordCandidates().size());
-				return startDrawingPhase(room, game, autoChoiceIndex, "TIMEOUT_AUTO_PICK");
+				return startDrawingPhase(room, game, null, "TIMEOUT_AUTO_PICK");
 			}
 		);
 	}
@@ -833,29 +807,39 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	@Override
 	public RoomJob drawStroke(String sessionId, JsonNode stroke) {
 		return new RoomJob(
-				room -> {
-					// 스트로크를 캔버스에 반영하고 송신자를 제외한 참가자에게 전달한다.
-					if (stroke != null && stroke.isArray()) {
-						boolean clearCanvas = stroke.size() > 0
-							&& stroke.get(0).canConvertToInt()
-							&& stroke.get(0).asInt() == 3;
+			room -> {
+				Game game = room.getGame();
+				boolean inPlayingGame = game != null && game.getGamePhase() == GamePhase.PLAYING;
+				if (inPlayingGame) {
+					if (game.getTurnPhase() != TurnPhase.DRAWING) {
+						return RoomJob.FollowUpResult.none();
+					}
+					if (sessionId == null || !sessionId.equals(game.getCurDrawerSid())) {
+						return RoomJob.FollowUpResult.none();
+					}
+				}
 
-						if (clearCanvas) {
-							room.getCurrentCanvas().clear();
-						} else {
-							room.getCurrentCanvas().add(stroke);
-						}
+				// 스트로크를 캔버스에 반영하고 송신자를 제외한 참가자에게 전달한다.
+				if (stroke != null && stroke.isArray()) {
+					boolean clearCanvas = stroke.size() > 0
+						&& stroke.get(0).canConvertToInt()
+						&& stroke.get(0).asInt() == 3;
 
-						for (Participant participant : room.getParticipants().values()) {
-							if (!participant.sessionId().equals(sessionId)) {
-								sendToParticipant(participant, 201, stroke);
-							}
+					if (clearCanvas) {
+						room.getCurrentCanvas().clear();
+					} else {
+						room.getCurrentCanvas().add(stroke);
+					}
+
+					for (Participant participant : room.getParticipants().values()) {
+						if (!participant.sessionId().equals(sessionId)) {
+							sendToParticipant(participant, 201, stroke);
 						}
 					}
-					return RoomJob.FollowUpResult.none();
-					
 				}
-			);
+				return RoomJob.FollowUpResult.none();
+			}
+		);
 	}
 
 	/**
@@ -993,12 +977,54 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	private RoomJob.FollowUpResult startDrawingPhase(
 		Room room,
 		Game game,
-		int choiceIndex,
+		Integer choiceIndex,
 		String selectionReason
 	) {
+		if (room == null || game == null) {
+			return RoomJob.FollowUpResult.none();
+		}
+		if (game.getGamePhase() != GamePhase.PLAYING || game.getRoundPhase() != RoundPhase.PLAYING) {
+			return RoomJob.FollowUpResult.none();
+		}
+		if (game.getTurnPhase() != Game.TurnPhase.WORD_CHOICE) {
+			log.warn(
+				"startDrawingPhase ignored because turn is not in word-choice phase. roomId={}, turnId={}, turnPhase={}",
+				room.getRoomId(),
+				game.getCurTurnId(),
+				game.getTurnPhase()
+			);
+			return RoomJob.FollowUpResult.none();
+		}
+		List<String> wordCandidates = game.getWordCandidates();
+		if (wordCandidates == null || wordCandidates.isEmpty()) {
+			log.warn(
+				"startDrawingPhase ignored because word candidates are empty. roomId={}, turnId={}",
+				room.getRoomId(),
+				game.getCurTurnId()
+				);
+			return RoomJob.FollowUpResult.none();
+		}
+		int resolvedChoiceIndex;
+		if (choiceIndex == null) {
+			resolvedChoiceIndex = ThreadLocalRandom.current().nextInt(wordCandidates.size());
+		} else {
+			resolvedChoiceIndex = choiceIndex;
+		}
+		if (resolvedChoiceIndex < 0 || resolvedChoiceIndex >= wordCandidates.size()) {
+			log.warn(
+				"startDrawingPhase ignored because choiceIndex out of range. roomId={}, turnId={}, choiceIndex={}, candidateCount={}",
+				room.getRoomId(),
+				game.getCurTurnId(),
+				resolvedChoiceIndex,
+				wordCandidates.size()
+			);
+			return RoomJob.FollowUpResult.none();
+		}
+
 		// 단어 직접 선택/시간초과 선택 모두 이 경로에서 DRAWING으로 전환한다.
 		// 선택된 단어로 DRAWING 단계에 진입하고 공통 상태/타이머를 세팅한다.
-		game.startDrawing(game.getCurDrawerSid(), choiceIndex);
+		room.getCurrentCanvas().clear();
+		game.startDrawing(resolvedChoiceIndex);
 		int drawSec = normalizePositiveSeconds(game.getGameSetting().drawSec(), 40);
 
 		for (Participant participant : room.getParticipants().values()) {
