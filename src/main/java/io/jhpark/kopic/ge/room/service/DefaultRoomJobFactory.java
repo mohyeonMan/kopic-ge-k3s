@@ -10,6 +10,9 @@ import io.jhpark.kopic.ge.room.dto.Game;
 import io.jhpark.kopic.ge.room.dto.Participant;
 import io.jhpark.kopic.ge.room.dto.Room;
 import io.jhpark.kopic.ge.room.dto.Setting;
+import io.jhpark.kopic.ge.room.dto.Game.GamePhase;
+import io.jhpark.kopic.ge.room.dto.Game.RoundPhase;
+import io.jhpark.kopic.ge.room.dto.Game.TurnPhase;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import java.time.Duration;
@@ -21,6 +24,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.ThreadLocalRandom;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -345,7 +349,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 
 				
 				Game currentGame = room.getGame();
-				if (currentGame != null) {
+				if (currentGame != null && !currentGame.isGameResult()) {
 					if (requestedParticipant != null) {
 						sendErrorToParticipant(
 							requestedParticipant,
@@ -357,11 +361,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 					return RoomJob.FollowUpResult.none();
 				}
 
-				List<Participant> gameParticipants = resolveParticipantsInJoinOrder(room);
-
-				Game newGame = Game.start(room.getSetting().copy(), gameParticipants);
-				room.startGame(newGame);
-				room.getCurrentCanvas().clear();
+				Game newGame =room.startGame();
 
 				Map<String, String> payload = Map.of(
 					"gid", newGame.getGameId()
@@ -372,12 +372,10 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 				}
 
 				log.info(
-					"game started. roomId={}, gameId={}, hostSessionId={}, participantCount={}, nextRoundDelaySec={}",
+					"game started. roomId={}, gameId={}, participantCount={}",
 					room.getRoomId(),
 					newGame.getGameId(),
-					sessionId,
-					room.getParticipants().size(),
-					START_ROUND_DELAY.toSeconds()
+					room.getParticipants().size()
 				);
 				return RoomJob.FollowUpResult.followUp(
 					nextRound(),
@@ -399,8 +397,16 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 		return new RoomJob(
 			room -> {
 				// 다음 라운드를 열고 라운드 시작 이벤트를 전파한 뒤 턴 준비로 이동한다.
-				Game game = resolveActivePlayingGame(room);
-				if (game == null) {
+				Game game = room.getGame();
+				if (game == null || game.getGamePhase() != GamePhase.PLAYING) {
+					log.info("can't start round because game is not playing");
+					return RoomJob.FollowUpResult.none();
+				}
+
+				RoundPhase roundPhase = game.getRoundPhase();
+
+				if(roundPhase != RoundPhase.READY){
+					log.info("can't start round because previous round finished invalid");
 					return RoomJob.FollowUpResult.none();
 				}
 
@@ -414,26 +420,27 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 					return RoomJob.FollowUpResult.none();
 				}
 
-					game.startRound(resolveRoundParticipants(room));
-					room.getCurrentCanvas().clear();
+				game.startRound(resolveRoundDrawerSids(room));
 
-				Map<String, Object> payload = new HashMap<>();
-				payload.put("gid", game.getGameId());
-				payload.put("round", game.getCurRoundIndex());
-				payload.put("roundId", game.getCurRoundId());
-				payload.put("drawerSids", game.getCurRoundDrawerSids());
+				Map<String, Object> payload = Map.of(
+					"gid", game.getGameId(),
+					"round", game.getCurRoundIndex(),
+					"roundId", game.getCurRoundId(),
+					"drawerSids", game.getCurRoundDrawerSids()
+				);
 
 				for (Participant participant : room.getParticipants().values()) {
 					sendToParticipant(participant, 202, payload);
 				}
 
-					log.info(
-						"round started. roomId={}, gameId={}, roundNo={}, drawerSids={}",
-						room.getRoomId(),
-						game.getGameId(),
-						game.getCurRoundIndex(),
-						game.getCurRoundDrawerSids()
-					);
+				log.info(
+					"round started. roomId={}, gameId={}, roundNo={}, drawerSids={}",
+					room.getRoomId(),
+					game.getGameId(),
+					game.getCurRoundIndex(),
+					game.getCurRoundDrawerSids()
+				);
+				
 				return RoomJob.FollowUpResult.followUp(
 					nextTurn(),
 					null,
@@ -454,36 +461,35 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 		return new RoomJob(
 			room -> {
 				// 턴 메타데이터를 준비하고 단어 선택 단계로 전환한다.
-				Game game = resolveActivePlayingGame(room);
-				if (game == null) {
-					return RoomJob.FollowUpResult.none();
-				}
-				if (game.getCurRoundDrawerSids() == null || game.getCurRoundDrawerSids().isEmpty()) {
-					log.warn("nextTurn ignored because round drawer list is empty. roomId={}", room.getRoomId());
+				Game game = room.getGame();
+				if (game == null || game.getGamePhase() != GamePhase.PLAYING ) {
+					log.info("can't start round");
 					return RoomJob.FollowUpResult.none();
 				}
 
-				// nextTurn은 턴 식별자/순서만 준비하고 실제 시작은 단어 선택 단계로 넘긴다.
-				try {
-					game.startTurn();
-				} catch (RuntimeException runtimeException) {
-					log.warn(
-						"nextTurn ignored because game rejected turn transition. roomId={}, turnPhase={}, curTurnIndex={}, drawerCount={}",
+				RoundPhase roundPhase = game.getRoundPhase();
+
+				if (roundPhase == null || roundPhase != RoundPhase.PLAYING) {
+					log.info("can't start round");
+					return RoomJob.FollowUpResult.none();
+				}
+
+				if(game.getTurnPhase() != TurnPhase.READY){
+					log.info("can't start round");
+					return RoomJob.FollowUpResult.none();
+				}
+
+				if(!game.hasNextTurn()){
+					log.info(
+						"nextRound ignored because no next round remains. roomId={}, curRoundNo={}, roundCount={}",
 						room.getRoomId(),
-						game.getTurnPhase(),
-						game.getCurTurnIndex(),
-						game.getCurRoundDrawerSids().size(),
-						runtimeException
-					);
-					broadcastErrorToAll(
-						room,
-						1999,
-						"TURN_TRANSITION_FAILED",
-						"failed to start next turn"
+						game.getCurRoundIndex(),
+						game.getGameSetting().roundCount()
 					);
 					return RoomJob.FollowUpResult.none();
 				}
-				room.getCurrentCanvas().clear();
+
+				game.startTurn();
 
 				log.info(
 					"turn prepared. roomId={}, gameId={}, roundNo={}, turnId={}, turnIndex={}, drawerSid={}",
@@ -513,26 +519,22 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	public RoomJob openWordChoiceWindow(String expectedTurnId) {
 		return new RoomJob(
 			room -> {
-				// 턴 정합성을 확인한 뒤 단어 후보를 만들고 선택 창 타이머를 건다.
-				Game game = resolveActivePlayingGame(room);
-				if (game == null) {
+
+				Game game = room.getGame();
+				if (game == null || game.getGamePhase() != GamePhase.PLAYING ) {
+					log.info("can't start round");
 					return RoomJob.FollowUpResult.none();
 				}
-				if (isBlank(expectedTurnId) || !expectedTurnId.equals(game.getCurTurnId())) {
-					log.warn(
-						"openWordChoiceWindow ignored due to turnId mismatch. roomId={}, expectedTurnId={}, currentTurnId={}",
-						room.getRoomId(),
-						expectedTurnId,
-						game.getCurTurnId()
-					);
+
+				RoundPhase roundPhase = game.getRoundPhase();
+
+				if (roundPhase == null || roundPhase != RoundPhase.PLAYING) {
+					log.info("can't start round");
 					return RoomJob.FollowUpResult.none();
 				}
-				if (game.getTurnPhase() != Game.TurnPhase.STARTING && game.getTurnPhase() != Game.TurnPhase.WORD_CHOICE) {
-					log.warn(
-						"openWordChoiceWindow ignored because turn phase is invalid. roomId={}, turnPhase={}",
-						room.getRoomId(),
-						game.getTurnPhase()
-					);
+
+				if(game.getTurnPhase() != TurnPhase.STARTING){
+					log.info("can't start round");
 					return RoomJob.FollowUpResult.none();
 				}
 
@@ -541,21 +543,22 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 				game.openWordCandidate(words);
 				int choiceSec = normalizePositiveSeconds(game.getGameSetting().wordChoiceSec(), 10);
 
+				Map<String, Object> payload =Map.of(
+					"sid", game.getCurDrawerSid(),
+					"wordChoiceSec", choiceSec
+				);
+
+				Map<String, Object> drawerPayload =Map.of(
+					"sid", game.getCurDrawerSid(),
+					"wordChoiceSec", choiceSec,
+					"words", words
+				);
+
 				for (Participant participant : room.getParticipants().values()) {
-					Map<String, Object> payload = new HashMap<>();
-					payload.put("gid", game.getGameId());
-					payload.put("round", game.getCurRoundIndex());
-					payload.put("roundId", game.getCurRoundId());
-					payload.put("turn", game.getCurTurnId());
-					payload.put("turnIndex", game.getCurTurnIndex());
-					payload.put("drawerSid", game.getCurDrawerSid());
-					payload.put("turnPhase", game.getTurnPhase().name());
-					payload.put("wordChoiceSec", choiceSec);
-					// 현재 그리는 사람에게만 단어 후보 전체를 전달한다.
-					if (participant.sessionId().equals(game.getCurDrawerSid())) {
-						payload.put("words", words);
-					}
-					sendToParticipant(participant, 203, payload);
+					if (participant.sessionId().equals(game.getCurDrawerSid())) 
+						sendToParticipant(participant, 203, drawerPayload);
+					else
+						sendToParticipant(participant, 203, payload);
 				}
 
 				log.info(
@@ -587,28 +590,29 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	public RoomJob explicitWordChoice(String sessionId, int choiceIndex) {
 		return new RoomJob(
 			room -> {
-				// 현재 drawer의 수동 단어 선택 요청을 검증하고 드로잉 단계로 넘긴다.
+
 				Participant chooser = resolveParticipant(room, sessionId);
+
 				if (chooser == null) {
+					log.info("can't start round");
 					return RoomJob.FollowUpResult.none();
 				}
-				Game game = resolveActivePlayingGame(room);
-				if (game == null) {
-					sendErrorToParticipant(
-						chooser,
-						1999,
-						"INVALID_REQUEST",
-						"game is not active"
-					);
+
+				Game game = room.getGame();
+				if (game == null || game.getGamePhase() != GamePhase.PLAYING ) {
+					log.info("can't start round");
 					return RoomJob.FollowUpResult.none();
 				}
-				if (game.getTurnPhase() != Game.TurnPhase.WORD_CHOICE) {
-					log.debug(
-						"explicitWordChoice ignored because turn is not in word-choice phase. roomId={}, turnId={}, turnPhase={}",
-						room.getRoomId(),
-						game.getCurTurnId(),
-						game.getTurnPhase()
-					);
+
+				RoundPhase roundPhase = game.getRoundPhase();
+
+				if (roundPhase == null || roundPhase != RoundPhase.PLAYING) {
+					log.info("can't start round");
+					return RoomJob.FollowUpResult.none();
+				}
+
+				if(game.getTurnPhase() != TurnPhase.WORD_CHOICE){
+					log.info("can't start round");
 					return RoomJob.FollowUpResult.none();
 				}
 
@@ -1255,13 +1259,13 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	 * 라운드 drawer 순서를 생성한다.
 	 * 기본은 입장순이며, 설정이 RANDOM이면 셔플한 순서를 반환한다.
 	 */
-	private List<Participant> resolveRoundParticipants(Room room) {
+	private List<String> resolveRoundDrawerSids(Room room) {
 		// 라운드 drawer 순서를 만들고 RANDOM 설정이면 셔플한다.
 		List<Participant> participants = new ArrayList<>(resolveParticipantsInJoinOrder(room));
 		if (room.getSetting().drawerOrderMode() == DrawerOrderMode.RANDOM) {
 			Collections.shuffle(participants);
 		}
-		return participants;
+		return participants.stream().filter(Objects::nonNull).map(Participant::sessionId).toList();
 	}
 
 	/**
@@ -1369,6 +1373,15 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 				if (rejectIfNotHost(room, requestedParticipant, "only host can update game setting")) {
 					return RoomJob.FollowUpResult.none();
 				}
+
+				if(room.getGame() != null){
+					sendErrorToParticipant(
+						requestedParticipant,
+						1999, "INVALID_REQUEST", 
+						"game already started");
+					return RoomJob.FollowUpResult.none();
+				}
+					
 
 				try {
 					Setting parsedSetting = Setting.fromPayload(settingPayload);

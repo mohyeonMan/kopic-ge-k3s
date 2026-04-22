@@ -57,8 +57,10 @@ public final class Room {
 		this.setting = Objects.requireNonNull(setting, "setting");
 	}
 
-	public void startGame(Game game) {
-		this.game = Objects.requireNonNull(game, "game");
+	public Game startGame() {
+		this.game = Game.start(this.setting.copy());
+
+		return this.game;
 	}
 
 	public void endGame() {
