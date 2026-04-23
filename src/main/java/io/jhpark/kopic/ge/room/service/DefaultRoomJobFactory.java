@@ -45,6 +45,10 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	private static final String DRAWING_TIMER_KEY = GAME_TIMER_KEY_PREFIX + "drawing";
 	private static final String TURN_RESULT_TIMER_KEY = GAME_TIMER_KEY_PREFIX + "turn-result";
 	private static final Duration TURN_RESULT_DELAY = Duration.ofSeconds(2);
+	private static final String GAME_RESULT_TIMER_KEY = GAME_TIMER_KEY_PREFIX + "game-result";
+	private static final Duration GAME_RESULT_DELAY = Duration.ofSeconds(5);
+	private static final String QUICK_RESTART_TIMER_KEY = GAME_TIMER_KEY_PREFIX + "quick-restart";
+	private static final Duration QUICK_RESTART_DELAY = Duration.ofSeconds(3);
 	private static final List<String> DEFAULT_WORD_POOL = List.of(
 		"사과",
 		"바나나",
@@ -351,7 +355,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 
 				
 				Game currentGame = room.getGame();
-				if (currentGame != null && !currentGame.isGameResult()) {
+				if (currentGame != null) {
 					if (requestedParticipant != null) {
 						sendErrorToParticipant(
 							requestedParticipant,
@@ -877,23 +881,147 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	}
 
 	/**
-	 * 게임 종료 처리 확장 포인트.
-	 * 현재 구현은 비어 있으며 notImplemented 경로로만 동작한다.
+	 * 게임 결과 화면을 시작한다.
+	 * 최종 점수 이벤트(206)를 전파하고 결과 화면 유지 후 resultViewEnd follow-up을 예약한다.
 	 */
 	@Override
 	public RoomJob gameEnd() {
-		// 아직 미구현 상태이므로 공통 no-op 핸들러로 위임한다.
-		return notImplemented("gameEnd");
+		return new RoomJob(
+			room -> {
+				Game game = room.getGame();
+				if (game == null) {
+					return RoomJob.FollowUpResult.none();
+				}
+				if (game.isGameResult()) {
+					log.debug("gameEnd ignored because game is already in result phase. roomId={}, gameId={}",
+						room.getRoomId(), game.getGameId());
+					return RoomJob.FollowUpResult.none();
+				}
+				if (!game.isPlaying()) {
+					log.warn(
+						"gameEnd ignored because game is not playing. roomId={}, gameId={}, gamePhase={}",
+						room.getRoomId(),
+						game.getGameId(),
+						game.getGamePhase()
+					);
+					return RoomJob.FollowUpResult.none();
+				}
+				if (game.hasNextTurn() || game.hasNextRound()) {
+					log.warn(
+						"gameEnd ignored because remaining game progress exists. roomId={}, gameId={}, hasNextTurn={}, hasNextRound={}",
+						room.getRoomId(),
+						game.getGameId(),
+						game.hasNextTurn(),
+						game.hasNextRound()
+					);
+					return RoomJob.FollowUpResult.none();
+				}
+
+				game.finishGameResult();
+				Map<String, Object> payload = gameResultPayload(game);
+				for (Participant participant : room.getParticipants().values()) {
+					sendToParticipant(participant, 206, payload);
+				}
+
+				log.info(
+					"game result started. roomId={}, gameId={}, resultDelaySec={}",
+					room.getRoomId(),
+					game.getGameId(),
+					GAME_RESULT_DELAY.toSeconds()
+				);
+				return RoomJob.FollowUpResult.followUp(
+					resultViewEnd(game.getGameId()),
+					GAME_RESULT_DELAY,
+					GAME_RESULT_TIMER_KEY
+				);
+			}
+		);
 	}
 
 	/**
-	 * 결과 화면 종료 처리 확장 포인트.
-	 * 현재 구현은 비어 있으며 notImplemented 경로로만 동작한다.
+	 * 현재 게임 결과 화면을 종료한다.
 	 */
 	@Override
 	public RoomJob resultViewEnd() {
-		// 아직 미구현 상태이므로 공통 no-op 핸들러로 위임한다.
-		return notImplemented("resultViewEnd");
+		return resultViewEnd(null);
+	}
+
+	private RoomJob resultViewEnd(String expectedGameId) {
+		return new RoomJob(
+			room -> {
+				Game game = room.getGame();
+				if (game == null) {
+					return RoomJob.FollowUpResult.none();
+				}
+				if (!isBlank(expectedGameId) && !expectedGameId.equals(game.getGameId())) {
+					log.warn(
+						"resultViewEnd ignored due to gameId mismatch. roomId={}, expectedGameId={}, currentGameId={}",
+						room.getRoomId(),
+						expectedGameId,
+						game.getGameId()
+					);
+					return RoomJob.FollowUpResult.none();
+				}
+				if (!game.isGameResult()) {
+					log.warn(
+						"resultViewEnd ignored because game is not in result phase. roomId={}, gameId={}, gamePhase={}",
+						room.getRoomId(),
+						game.getGameId(),
+						game.getGamePhase()
+					);
+					return RoomJob.FollowUpResult.none();
+				}
+
+				String gameId = game.getGameId();
+				boolean quickRestart = shouldAutoRestartQuickGame(room);
+				Map<String, Object> payload = resultViewEndPayload(gameId, quickRestart);
+				room.endGame();
+				room.getCurrentCanvas().clear();
+				for (Participant participant : room.getParticipants().values()) {
+					sendToParticipant(participant, 207, payload);
+				}
+
+				log.info(
+					"game result ended. roomId={}, gameId={}, quickRestart={}, restartDelaySec={}",
+					room.getRoomId(),
+					gameId,
+					quickRestart,
+					quickRestart ? QUICK_RESTART_DELAY.toSeconds() : 0
+				);
+				if (!quickRestart) {
+					return RoomJob.FollowUpResult.none();
+				}
+				return RoomJob.FollowUpResult.followUp(
+					startGame(null),
+					QUICK_RESTART_DELAY,
+					QUICK_RESTART_TIMER_KEY
+				);
+			}
+		);
+	}
+
+	private Map<String, Object> gameResultPayload(Game game) {
+		Map<String, Object> payload = new HashMap<>();
+		payload.put("gid", game.getGameId());
+		payload.put("resultSec", GAME_RESULT_DELAY.toSeconds());
+		if (game.getTotalPoints() != null && !game.getTotalPoints().isEmpty()) {
+			payload.put("totalPoints", Map.copyOf(game.getTotalPoints()));
+		}
+		return payload;
+	}
+
+	private Map<String, Object> resultViewEndPayload(String gameId, boolean quickRestart) {
+		Map<String, Object> payload = new HashMap<>();
+		payload.put("gid", gameId);
+		if (quickRestart) {
+			payload.put("restartSec", QUICK_RESTART_DELAY.toSeconds());
+		}
+		return payload;
+	}
+
+	private boolean shouldAutoRestartQuickGame(Room room) {
+		return room.getRoomType() == Room.QUICK_ROOM_TYPE
+			&& room.getParticipants().size() >= 2;
 	}
 
 	/**

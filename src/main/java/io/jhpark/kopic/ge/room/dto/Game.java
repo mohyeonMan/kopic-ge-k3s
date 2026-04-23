@@ -118,6 +118,10 @@ public class Game {
         this.roundPhase = RoundPhase.FINISHED;
     }
 
+    public void finishGameResult() {
+        this.gamePhase = GamePhase.GAME_RESULT;
+    }
+
     public void readyNextTurn(){
         this.turnPhase = TurnPhase.READY;
     }
