@@ -70,6 +70,10 @@ public final class RoomSession {
 		if (timerKey == null || timerKey.isBlank()) {
 			return;
 		}
+		if (timerKey.endsWith("*")) {
+			cancelTimersByPrefix(timerKey.substring(0, timerKey.length() - 1));
+			return;
+		}
 		ScheduledFuture<?> existing = timers.remove(timerKey);
 		if (existing != null) {
 			boolean cancelled = existing.cancel(false);
@@ -79,6 +83,23 @@ public final class RoomSession {
 		}
 		log.debug("room timer cancel skipped because timer was not found. roomId={}, timerKey={}",
 			room.getRoomId(), timerKey);
+	}
+
+	private void cancelTimersByPrefix(String timerKeyPrefix) {
+		int cancelledCount = 0;
+		for (Map.Entry<String, ScheduledFuture<?>> entry : timers.entrySet()) {
+			String timerKey = entry.getKey();
+			ScheduledFuture<?> future = entry.getValue();
+			if (!timerKey.startsWith(timerKeyPrefix)) {
+				continue;
+			}
+			if (timers.remove(timerKey, future)) {
+				future.cancel(false);
+				cancelledCount++;
+			}
+		}
+		log.debug("room timers cancelled by prefix. roomId={}, timerKeyPrefix={}, cancelledCount={}",
+			room.getRoomId(), timerKeyPrefix, cancelledCount);
 	}
 
 	public void close() {

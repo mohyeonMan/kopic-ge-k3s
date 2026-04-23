@@ -118,6 +118,14 @@ public class Game {
         this.roundPhase = RoundPhase.FINISHED;
     }
 
+    public void readyNextTurn(){
+        this.turnPhase = TurnPhase.READY;
+    }
+
+    public void readyNextRound(){
+        this.roundPhase = RoundPhase.READY;
+    }
+
     public boolean hasNextTurn() {
         return this.curRoundDrawerSids != null && !this.curRoundDrawerSids.isEmpty();
     }

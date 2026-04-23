@@ -37,11 +37,13 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 
 	private static final String CLOSE_IF_EMPTY_TIMER_KEY = "close-if-empty";
 	private static final Duration CLOSE_IF_EMPTY_DELAY = Duration.ofSeconds(30);
-	private static final String START_ROUND_TIMER_KEY = "start-round";
+	private static final String GAME_TIMER_KEY_PREFIX = "game:";
+	private static final String GAME_TIMER_CLEAR_KEY = GAME_TIMER_KEY_PREFIX + "*";
+	private static final String START_ROUND_TIMER_KEY = GAME_TIMER_KEY_PREFIX + "start-round";
 	private static final Duration START_ROUND_DELAY = Duration.ofSeconds(3);
-	private static final String WORD_CHOICE_TIMER_KEY = "word-choice";
-	private static final String DRAWING_TIMER_KEY = "drawing";
-	private static final String TURN_RESULT_TIMER_KEY = "turn-result";
+	private static final String WORD_CHOICE_TIMER_KEY = GAME_TIMER_KEY_PREFIX + "word-choice";
+	private static final String DRAWING_TIMER_KEY = GAME_TIMER_KEY_PREFIX + "drawing";
+	private static final String TURN_RESULT_TIMER_KEY = GAME_TIMER_KEY_PREFIX + "turn-result";
 	private static final Duration TURN_RESULT_DELAY = Duration.ofSeconds(2);
 	private static final List<String> DEFAULT_WORD_POOL = List.of(
 		"사과",
@@ -196,7 +198,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 					String cancelTimerKey = null;
 					if (game != null) {
 						// stale game 상태를 남기지 않도록 게임/타이머를 같이 정리한다.
-						cancelTimerKey = resolveGameTimerCancelKeyForLeave(game);
+						cancelTimerKey = GAME_TIMER_CLEAR_KEY;
 						game.removeParticipant(sessionId);
 						room.endGame();
 					}
@@ -247,7 +249,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 
 					// 게임은 2명 이상에서만 유지한다.
 					if (participants.size() < 2) {
-						cancelTimerKey = resolveGameTimerCancelKeyForLeave(game);
+						cancelTimerKey = GAME_TIMER_CLEAR_KEY;
 						room.endGame();
 						room.getCurrentCanvas().clear();
 						log.info(
@@ -687,15 +689,14 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 
 	/**
 	 * 턴 종료를 처리한다.
-	 * 턴 결과 phase로 전이한 뒤 결과 이벤트(205)를 전파하고
-	 * 남은 진행 상태에 따라 nextTurn / nextRound / gameEnd 중 다음 잡을 결정한다.
-	 * 결과 화면 유지 시간(TURN_RESULT_DELAY) 후속 실행과 drawing 타이머 취소를 함께 반환한다.
+	 * 종료 가능한 턴 phase만 결과 phase로 전이하고 경량 결과 이벤트(205)를 전파한다.
+	 * 결과 화면 유지 시간 이후 별도 follow-up에서 READY 전환과 다음 진행을 결정한다.
 	 */
 	@Override
 	public RoomJob turnEnd(String expectedTurnId, String endReason) {
 		return new RoomJob(
 			room -> {
-				// 턴 결과를 확정/전파하고 다음 액션(nextTurn/nextRound/gameEnd)을 결정한다.
+				// 턴 결과 상태를 먼저 확정하고, 다음 진행은 결과 화면 종료 후 최신 상태로 판단한다.
 				Game game = resolveActivePlayingGame(room);
 				if (game == null) {
 					return RoomJob.FollowUpResult.none();
@@ -709,64 +710,160 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 					);
 					return RoomJob.FollowUpResult.none();
 				}
-				if (game.getTurnPhase() == Game.TurnPhase.TURN_RESULT) {
-					log.debug("turnEnd ignored because turn is already in result phase. roomId={}, turnId={}", room.getRoomId(), game.getCurTurnId());
+				TurnPhase turnPhase = game.getTurnPhase();
+				if (turnPhase == TurnPhase.TURN_RESULT) {
+					log.debug("turnEnd ignored because turn is already in result phase. roomId={}, turnId={}",
+						room.getRoomId(), game.getCurTurnId());
+					return RoomJob.FollowUpResult.none();
+				}
+				if (game.getRoundPhase() != RoundPhase.PLAYING) {
+					log.warn(
+						"turnEnd ignored because round is not playing. roomId={}, turnId={}, roundPhase={}",
+						room.getRoomId(),
+						game.getCurTurnId(),
+						game.getRoundPhase()
+					);
+					return RoomJob.FollowUpResult.none();
+				}
+				if (!isEndableTurnPhase(turnPhase)) {
+					log.warn(
+						"turnEnd ignored because turn phase is not endable. roomId={}, turnId={}, turnPhase={}",
+						room.getRoomId(),
+						game.getCurTurnId(),
+						turnPhase
+					);
 					return RoomJob.FollowUpResult.none();
 				}
 
+				String resolvedEndReason = isBlank(endReason) ? "UNKNOWN" : endReason;
 				game.finishTurnResult();
+				if (!game.hasNextTurn()) {
+					game.finishRoundResult();
+				}
 
-				Map<String, Object> payload = new HashMap<>();
-				payload.put("gid", game.getGameId());
-				payload.put("round", game.getCurRoundIndex());
-				payload.put("roundId", game.getCurRoundId());
-				payload.put("turn", game.getCurTurnId());
-				payload.put("turnIndex", game.getCurTurnIndex());
-				payload.put("drawerSid", game.getCurDrawerSid());
-				payload.put("reason", endReason);
-				payload.put("answer", game.getAnswerWord());
-				payload.put("earnedPoints", new HashMap<>(game.getEarnedPoints()));
-
+				Map<String, Object> payload = turnEndPayload(game, resolvedEndReason);
 				for (Participant participant : room.getParticipants().values()) {
 					sendToParticipant(participant, 205, payload);
+				}
+
+				log.info(
+					"turn result started. roomId={}, gameId={}, roundNo={}, turnId={}, endReason={}, resultDelaySec={}",
+					room.getRoomId(),
+					game.getGameId(),
+					game.getCurRoundIndex(),
+					game.getCurTurnId(),
+					resolvedEndReason,
+					TURN_RESULT_DELAY.toSeconds()
+				);
+				return new RoomJob.FollowUpResult(
+					new RoomJob.FollowUp(
+						turnResultEnd(game.getCurTurnId()),
+						TURN_RESULT_DELAY,
+						TURN_RESULT_TIMER_KEY
+					),
+					resolveTurnTimerCancelKey(turnPhase),
+					RoomJob.FollowUpAction.NONE
+				);
+			}
+		);
+	}
+
+	private RoomJob turnResultEnd(String expectedTurnId) {
+		return new RoomJob(
+			room -> {
+				Game game = resolveActivePlayingGame(room);
+				if (game == null) {
+					return RoomJob.FollowUpResult.none();
+				}
+				if (isBlank(expectedTurnId) || !expectedTurnId.equals(game.getCurTurnId())) {
+					log.warn(
+						"turnResultEnd ignored due to turnId mismatch. roomId={}, expectedTurnId={}, currentTurnId={}",
+						room.getRoomId(),
+						expectedTurnId,
+						game.getCurTurnId()
+					);
+					return RoomJob.FollowUpResult.none();
+				}
+				if (game.getTurnPhase() != TurnPhase.TURN_RESULT) {
+					log.warn(
+						"turnResultEnd ignored because turn is not in result phase. roomId={}, turnId={}, turnPhase={}",
+						room.getRoomId(),
+						game.getCurTurnId(),
+						game.getTurnPhase()
+					);
+					return RoomJob.FollowUpResult.none();
 				}
 
 				RoomJob nextJob;
 				String nextAction;
 				if (game.hasNextTurn()) {
+					if (game.getRoundPhase() != RoundPhase.PLAYING) {
+						log.warn(
+							"turnResultEnd ignored because round is not playing before next turn. roomId={}, turnId={}, roundPhase={}",
+							room.getRoomId(),
+							game.getCurTurnId(),
+							game.getRoundPhase()
+						);
+						return RoomJob.FollowUpResult.none();
+					}
+					game.readyNextTurn();
 					nextJob = nextTurn();
 					nextAction = "nextTurn";
 				} else if (game.hasNextRound()) {
-					game.finishRoundResult();
+					if (game.getRoundPhase() == RoundPhase.PLAYING) {
+						game.finishRoundResult();
+					}
+					if (game.getRoundPhase() != RoundPhase.FINISHED) {
+						log.warn(
+							"turnResultEnd ignored because round is not finished before next round. roomId={}, turnId={}, roundPhase={}",
+							room.getRoomId(),
+							game.getCurTurnId(),
+							game.getRoundPhase()
+						);
+						return RoomJob.FollowUpResult.none();
+					}
+					game.readyNextRound();
 					nextJob = nextRound();
 					nextAction = "nextRound";
 				} else {
-					game.finishRoundResult();
+					if (game.getRoundPhase() == RoundPhase.PLAYING) {
+						game.finishRoundResult();
+					}
 					nextJob = gameEnd();
 					nextAction = "gameEnd";
 				}
+
 				log.info(
-					"turn ended. roomId={}, gameId={}, roundNo={}, turnId={}, endReason={}, nextAction={}, resultDelaySec={}",
+					"turn result ended. roomId={}, gameId={}, roundNo={}, turnId={}, nextAction={}",
 					room.getRoomId(),
 					game.getGameId(),
 					game.getCurRoundIndex(),
 					game.getCurTurnId(),
-					endReason,
-					nextAction,
-					TURN_RESULT_DELAY.toSeconds()
+					nextAction
 				);
-				// 정답 조기 종료 같은 경우를 위해 진행 중인 drawing 타이머를 취소한다.
-				return new RoomJob.FollowUpResult(
-					new RoomJob.FollowUp(
-						nextJob,
-						TURN_RESULT_DELAY,
-						TURN_RESULT_TIMER_KEY
-					),
-					DRAWING_TIMER_KEY,
-					RoomJob.FollowUpAction.NONE
-				);
+				return RoomJob.FollowUpResult.followUp(nextJob, null, null);
 			}
 		);
+	}
+
+	private Map<String, Object> turnEndPayload(Game game, String endReason) {
+		Map<String, Object> payload = new HashMap<>();
+		payload.put("gid", game.getGameId());
+		payload.put("turn", game.getCurTurnId());
+		payload.put("reason", endReason);
+		if (!isBlank(game.getAnswerWord())) {
+			payload.put("answer", game.getAnswerWord());
+		}
+		if (game.getEarnedPoints() != null && !game.getEarnedPoints().isEmpty()) {
+			payload.put("earnedPoints", Map.copyOf(game.getEarnedPoints()));
+		}
+		return payload;
+	}
+
+	private boolean isEndableTurnPhase(TurnPhase turnPhase) {
+		return turnPhase == TurnPhase.STARTING
+			|| turnPhase == TurnPhase.WORD_CHOICE
+			|| turnPhase == TurnPhase.DRAWING;
 	}
 
 	/**
@@ -1027,24 +1124,25 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 		game.startDrawing(resolvedChoiceIndex);
 		int drawSec = normalizePositiveSeconds(game.getGameSetting().drawSec(), 40);
 
+		Map<String, Object> drawerPayload = Map.of(
+			"gid", game.getGameId(),
+			"drawSec", drawSec,
+			"drawerSid", game.getCurDrawerSid(),
+			"answer", game.getAnswerWord()
+		);
+
+		Map<String, Object> guesserPayload = Map.of(
+			"gid", game.getGameId(),
+			"drawSec", drawSec,
+			"drawerSid", game.getCurDrawerSid(),
+			"answerLength", game.getAnswerWord().length()
+		);
+
 		for (Participant participant : room.getParticipants().values()) {
-			Map<String, Object> payload = new HashMap<>();
-			payload.put("gid", game.getGameId());
-			payload.put("round", game.getCurRoundIndex());
-			payload.put("roundId", game.getCurRoundId());
-			payload.put("turn", game.getCurTurnId());
-			payload.put("turnIndex", game.getCurTurnIndex());
-			payload.put("drawerSid", game.getCurDrawerSid());
-			payload.put("turnPhase", game.getTurnPhase().name());
-			payload.put("drawSec", drawSec);
-			payload.put("selectionReason", selectionReason);
-			// 정답 텍스트는 그리는 사람에게만 주고, 나머지는 글자 수 힌트만 준다.
-			if (participant.sessionId().equals(game.getCurDrawerSid())) {
-				payload.put("answer", game.getAnswerWord());
-			} else if (game.getAnswerWord() != null) {
-				payload.put("answerLength", game.getAnswerWord().length());
-			}
-			sendToParticipant(participant, 203, payload);
+			if (participant.sessionId().equals(game.getCurDrawerSid()))
+				sendToParticipant(participant, 203, drawerPayload);
+			else
+				sendToParticipant(participant, 203, guesserPayload);
 		}
 
 		log.info(
@@ -1100,30 +1198,6 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 			return defaultValue;
 		}
 		return seconds;
-	}
-
-	/**
-	 * leave 처리 중 게임 상태에 맞는 취소 타이머 키를 계산한다.
-	 * 아직 라운드 진입 전이라 turnPhase가 비어 있으면 start-round 타이머를 취소 대상으로 본다.
-	 */
-	private String resolveGameTimerCancelKeyForLeave(Game game) {
-		if (game == null) {
-			return null;
-		}
-		Game.TurnPhase turnPhase = game.getTurnPhase();
-		if (turnPhase == null) {
-			return START_ROUND_TIMER_KEY;
-		}
-		if (turnPhase == Game.TurnPhase.WORD_CHOICE) {
-			return WORD_CHOICE_TIMER_KEY;
-		}
-		if (turnPhase == Game.TurnPhase.DRAWING) {
-			return DRAWING_TIMER_KEY;
-		}
-		if (turnPhase == Game.TurnPhase.TURN_RESULT) {
-			return TURN_RESULT_TIMER_KEY;
-		}
-		return null;
 	}
 
 	/**
@@ -1369,22 +1443,6 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 		);
 	}
 
-	/**
-	 * 게임 설정 변경 요청을 처리한다.
-	 * 요청자가 방장인지 확인하고 payload를 Setting으로 파싱해 방 설정을 갱신한다.
-	 * 성공 시 요청자를 제외한 참가자에게 설정 변경 이벤트(107)를 전파한다.
-	 */
-	/**
-	 * 방의 모든 참가자에게 동일한 에러 이벤트를 전송한다.
-	 */
-	private void broadcastErrorToAll(Room room, int errorEventCode, String reason, String message) {
-		if (room == null) {
-			return;
-		}
-		for (Participant participant : room.getParticipants().values()) {
-			sendErrorToParticipant(participant, errorEventCode, reason, message);
-		}
-	}
 
 	@Override
 	public RoomJob updateSetting(String requestedSessionId, JsonNode settingPayload) {
