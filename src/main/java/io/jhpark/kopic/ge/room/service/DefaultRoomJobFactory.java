@@ -48,6 +48,8 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	private static final Duration GAME_RESULT_DELAY = Duration.ofSeconds(5);
 	private static final String QUICK_RESTART_TIMER_KEY = GAME_TIMER_KEY_PREFIX + "quick-restart";
 	private static final Duration QUICK_RESTART_DELAY = Duration.ofSeconds(3);
+	private static final String RETURN_TO_LOBBY_REASON_RESULT_END = "RESULT_END";
+	private static final String RETURN_TO_LOBBY_REASON_NOT_ENOUGH_PARTICIPANTS = "NOT_ENOUGH_PARTICIPANTS";
 	private static final List<String> DEFAULT_WORD_POOL = List.of(
 		"사과",
 		"바나나",
@@ -244,6 +246,8 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 				Game game = room.getGame();
 				RoomJob.FollowUp followUp = null;
 				String cancelTimerKey = null;
+				String returnToLobbyReason = null;
+				String returnToLobbyGameId = null;
 				if (game != null) {
 					boolean wasCurrentDrawer = sessionId.equals(game.getCurDrawerSid());
 					Game.TurnPhase turnPhase = game.getTurnPhase();
@@ -253,8 +257,8 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 					// 게임은 2명 이상에서만 유지한다.
 					if (participants.size() < 2) {
 						cancelTimerKey = GAME_TIMER_CLEAR_KEY;
-						room.endGame();
-						room.getCurrentCanvas().clear();
+						returnToLobbyReason = RETURN_TO_LOBBY_REASON_NOT_ENOUGH_PARTICIPANTS;
+						returnToLobbyGameId = game.getGameId();
 						log.info(
 							"game ended because participant count dropped below minimum. roomId={}, remainingParticipants={}",
 							room.getRoomId(),
@@ -291,6 +295,14 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 							"nextHost", currentHostSessionId
 						);
 					sendToParticipant(participant, 302, payload);
+				}
+				if (!isBlank(returnToLobbyReason) && !isBlank(returnToLobbyGameId)) {
+					clearGameAndBroadcastReturnToLobby(
+						room,
+						returnToLobbyGameId,
+						returnToLobbyReason,
+						false
+					);
 				}
 
 				RoomJob.FollowUpAction followUpAction = wasFull
@@ -811,7 +823,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	}
 
 	/**
-	 * 현재 게임 결과 화면을 종료한다.
+	 * 현재 게임 결과 화면을 종료하고 로비로 복귀시킨다.
 	 */
 	private RoomJob resultViewEnd() {
 		return new RoomJob(
@@ -823,12 +835,12 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 
 				String gameId = game.getGameId();
 				boolean quickRestart = shouldAutoRestartQuickGame(room);
-				Map<String, Object> payload = resultViewEndPayload(gameId, quickRestart);
-				room.endGame();
-				room.getCurrentCanvas().clear();
-				for (Participant participant : room.getParticipants().values()) {
-					sendToParticipant(participant, 207, payload);
-				}
+				clearGameAndBroadcastReturnToLobby(
+					room,
+					gameId,
+					RETURN_TO_LOBBY_REASON_RESULT_END,
+					quickRestart
+				);
 
 				log.info(
 					"game result ended. roomId={}, gameId={}, quickRestart={}, restartDelaySec={}",
@@ -863,14 +875,32 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 		);
 	}
 
-	private Map<String, Object> resultViewEndPayload(String gameId, boolean quickRestart) {
+	private Map<String, Object> returnToLobbyPayload(String gameId, String reason, boolean quickRestart) {
 		if (quickRestart) {
 			return Map.of(
 				"gid", gameId,
+				"reason", reason,
 				"restartSec", QUICK_RESTART_DELAY.toSeconds()
 			);
 		}
-		return Map.of("gid", gameId);
+		return Map.of(
+			"gid", gameId,
+			"reason", reason
+		);
+	}
+
+	private void clearGameAndBroadcastReturnToLobby(
+		Room room,
+		String gameId,
+		String reason,
+		boolean quickRestart
+	) {
+		Map<String, Object> payload = returnToLobbyPayload(gameId, reason, quickRestart);
+		room.endGame();
+		room.getCurrentCanvas().clear();
+		for (Participant participant : room.getParticipants().values()) {
+			sendToParticipant(participant, 207, payload);
+		}
 	}
 
 	private boolean shouldAutoRestartQuickGame(Room room) {
