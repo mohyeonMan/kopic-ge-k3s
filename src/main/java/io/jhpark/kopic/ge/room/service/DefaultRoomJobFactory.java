@@ -20,7 +20,6 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -267,7 +266,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 						&& !isBlank(currentTurnId)
 					) {
 						followUp = new RoomJob.FollowUp(
-							turnEnd(currentTurnId, "DRAWER_LEFT"),
+							turnEnd("DRAWER_LEFT"),
 							null,
 							null
 						);
@@ -285,11 +284,12 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 				log.info("leave broadcast sent. roomId={}, leftSessionId={}, remainingParticipants={}",
 					room.getRoomId(), sessionId, participants.size());
 				for (Participant participant : participants.values()) {
-					Map<String, Object> payload = new HashMap<>();
-					payload.put("sid", sessionId);
-					if (currentHostSessionId != null) {
-						payload.put("nextHost", currentHostSessionId);
-					}
+					Map<String, Object> payload = currentHostSessionId == null
+						? Map.of("sid", sessionId)
+						: Map.of(
+							"sid", sessionId,
+							"nextHost", currentHostSessionId
+						);
 					sendToParticipant(participant, 302, payload);
 				}
 
@@ -304,8 +304,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	 * 방이 비어 있는지 다시 확인한 뒤 액터 종료를 요청한다.
 	 * close-if-empty 타이머 만료 후 실행되며, 중간에 재입장이 있었다면 아무 동작도 하지 않는다.
 	 */
-	@Override
-	public RoomJob closeIfEmpty() {
+	private RoomJob closeIfEmpty() {
 		return new RoomJob(
 				room -> {
 					// 타이머 실행 시점에 참가자가 비어 있는지 최종 확인한다.
@@ -354,16 +353,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 				}
 
 				
-				Game currentGame = room.getGame();
-				if (currentGame != null) {
-					if (requestedParticipant != null) {
-						sendErrorToParticipant(
-							requestedParticipant,
-							1999,
-							"CONFLICT",
-							"game is already active"
-						);
-					}
+				if (rejectIfGameAlreadyExists(room, requestedParticipant, "CONFLICT", "game is already active")) {
 					return RoomJob.FollowUpResult.none();
 				}
 
@@ -398,23 +388,14 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	 * 라운드 상태/그리는 순서를 초기화하고 라운드 시작 이벤트(202)를 전파한다.
 	 * 라운드 시작 직후에는 즉시 nextTurn follow-up으로 이어진다.
 	 */
-	@Override
-	public RoomJob nextRound() {
+	private RoomJob nextRound() {
 		return new RoomJob(
 			room -> {
 				// 다음 라운드를 열고 라운드 시작 이벤트를 전파한 뒤 턴 준비로 이동한다.
+				if (!validatePlayingRound(room, RoundPhase.READY)) {
+					return RoomJob.FollowUpResult.none();
+				}
 				Game game = room.getGame();
-				if (game == null || game.getGamePhase() != GamePhase.PLAYING) {
-					log.info("can't start round because game is not playing");
-					return RoomJob.FollowUpResult.none();
-				}
-
-				RoundPhase roundPhase = game.getRoundPhase();
-
-				if(roundPhase != RoundPhase.READY){
-					log.info("can't start round because previous round finished invalid");
-					return RoomJob.FollowUpResult.none();
-				}
 
 				if (!game.hasNextRound()) {
 					log.info(
@@ -462,28 +443,14 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	 * 성공하면 캔버스를 비운 뒤 단어 선택 창 오픈 잡(openWordChoiceWindow)으로 연결한다.
 	 * 전이 불가 상태(phase 불일치, 인덱스 범위 문제)는 예외를 잡아 무시한다.
 	 */
-	@Override
-	public RoomJob nextTurn() {
+	private RoomJob nextTurn() {
 		return new RoomJob(
 			room -> {
 				// 턴 메타데이터를 준비하고 단어 선택 단계로 전환한다.
+				if (!validatePlayingTurn(room, RoundPhase.PLAYING, TurnPhase.READY)) {
+					return RoomJob.FollowUpResult.none();
+				}
 				Game game = room.getGame();
-				if (game == null || game.getGamePhase() != GamePhase.PLAYING ) {
-					log.info("can't start round");
-					return RoomJob.FollowUpResult.none();
-				}
-
-				RoundPhase roundPhase = game.getRoundPhase();
-
-				if (roundPhase == null || roundPhase != RoundPhase.PLAYING) {
-					log.info("can't start round");
-					return RoomJob.FollowUpResult.none();
-				}
-
-				if(game.getTurnPhase() != TurnPhase.READY){
-					log.info("can't start round");
-					return RoomJob.FollowUpResult.none();
-				}
 
 				if(!game.hasNextTurn()){
 					log.info(
@@ -507,7 +474,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 					game.getCurDrawerSid()
 				);
 				return RoomJob.FollowUpResult.followUp(
-					openWordChoiceWindow(game.getCurTurnId()),
+					openWordChoiceWindow(),
 					null,
 					null
 				);
@@ -517,32 +484,17 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 
 	/**
 	 * 단어 선택 창을 연다.
-	 * expectedTurnId로 오래된 타이머 실행을 차단하고, 현재 턴 상태가 단어 선택 가능인지 검증한다.
+	 * 현재 턴 상태가 단어 선택 가능인지 검증한 뒤 단어 선택 이벤트(203)를 전파한다.
 	 * 후보 단어는 drawer에게만 포함해 이벤트(203)로 전파하며
 	 * wordChoiceTimeout 타이머 follow-up을 등록한다.
 	 */
-	@Override
-	public RoomJob openWordChoiceWindow(String expectedTurnId) {
+	private RoomJob openWordChoiceWindow() {
 		return new RoomJob(
 			room -> {
-
+				if (!validatePlayingTurn(room, RoundPhase.PLAYING, TurnPhase.STARTING)) {
+					return RoomJob.FollowUpResult.none();
+				}
 				Game game = room.getGame();
-				if (game == null || game.getGamePhase() != GamePhase.PLAYING ) {
-					log.info("can't start round");
-					return RoomJob.FollowUpResult.none();
-				}
-
-				RoundPhase roundPhase = game.getRoundPhase();
-
-				if (roundPhase == null || roundPhase != RoundPhase.PLAYING) {
-					log.info("can't start round");
-					return RoomJob.FollowUpResult.none();
-				}
-
-				if(game.getTurnPhase() != TurnPhase.STARTING){
-					log.info("can't start round");
-					return RoomJob.FollowUpResult.none();
-				}
 
 				// 단어 후보는 현재 룸 설정값을 기준으로 턴마다 새로 만든다.
 				List<String> words = resolveWordChoices(game.getGameSetting().wordChoiceCount());
@@ -578,7 +530,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 					choiceSec
 				);
 				return RoomJob.FollowUpResult.followUp(
-					wordChoiceTimeout(game.getCurTurnId()),
+					wordChoiceTimeout(),
 					Duration.ofSeconds(choiceSec),
 					WORD_CHOICE_TIMER_KEY
 				);
@@ -596,27 +548,14 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	public RoomJob explicitWordChoice(String sessionId, int choiceIndex) {
 		return new RoomJob(
 			room -> {
-
 				Participant chooser = resolveParticipant(room, sessionId);
-
 				if (chooser == null) {
-					log.info("can't start round");
 					return RoomJob.FollowUpResult.none();
 				}
-
+				if (!validatePlayingTurn(room, RoundPhase.PLAYING, TurnPhase.WORD_CHOICE)) {
+					return RoomJob.FollowUpResult.none();
+				}
 				Game game = room.getGame();
-				if (game == null || game.getGamePhase() != GamePhase.PLAYING ) {
-					log.info("can't start round");
-					return RoomJob.FollowUpResult.none();
-				}
-
-				RoundPhase roundPhase = game.getRoundPhase();
-
-				if (roundPhase == null || roundPhase != RoundPhase.PLAYING) {
-					log.info("can't start round");
-					return RoomJob.FollowUpResult.none();
-				}
-
 				if (rejectIfNotCurrentDrawer(game, chooser, "only current drawer can choose word")) {
 					return RoomJob.FollowUpResult.none();
 				}
@@ -629,27 +568,16 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 
 	/**
 	 * 단어 선택 시간 만료를 처리한다.
-	 * 현재 턴이 WORD_CHOICE 상태인지와 turnId 일치 여부를 확인한 뒤
-	 * 후보 단어 중 하나를 자동 선택하여 DRAWING 단계로 전환한다.
+	 * 현재 턴이 WORD_CHOICE 상태인지 확인한 뒤 후보 단어 중 하나를 자동 선택하여 DRAWING 단계로 전환한다.
 	 */
-	@Override
-	public RoomJob wordChoiceTimeout(String expectedTurnId) {
+	private RoomJob wordChoiceTimeout() {
 		return new RoomJob(
 			room -> {
 				// 단어 선택 시간이 지나면 후보 중 하나를 자동 선택한다.
-				Game game = resolveActivePlayingGame(room);
-				if (game == null) {
+				if (!validatePlayingTurn(room, RoundPhase.PLAYING, TurnPhase.WORD_CHOICE)) {
 					return RoomJob.FollowUpResult.none();
 				}
-				if (isBlank(expectedTurnId) || !expectedTurnId.equals(game.getCurTurnId())) {
-					log.warn(
-						"wordChoiceTimeout ignored due to turnId mismatch. roomId={}, expectedTurnId={}, currentTurnId={}",
-						room.getRoomId(),
-						expectedTurnId,
-						game.getCurTurnId()
-					);
-					return RoomJob.FollowUpResult.none();
-				}
+				Game game = room.getGame();
 				return startDrawingPhase(room, game, null, "TIMEOUT_AUTO_PICK");
 			}
 		);
@@ -657,33 +585,17 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 
 	/**
 	 * 그리기 시간 만료를 처리한다.
-	 * turnId/phase를 검증해 오래된 타이머 실행을 무시하고
-	 * 유효한 경우 turnEnd("DRAWING_TIMEOUT") follow-up으로 턴 종료를 유도한다.
+	 * 현재 턴이 DRAWING 상태인지 검증하고 유효한 경우 turnEnd("DRAWING_TIMEOUT") follow-up으로 턴 종료를 유도한다.
 	 */
-	@Override
-	public RoomJob drawingTimeout(String expectedTurnId) {
+	private RoomJob drawingTimeout() {
 		return new RoomJob(
 			room -> {
 				// 드로잉 시간이 종료되면 현재 턴을 결과 단계로 마무리한다.
-				Game game = resolveActivePlayingGame(room);
-				if (game == null) {
+				if (!validatePlayingTurn(room, RoundPhase.PLAYING, TurnPhase.DRAWING)) {
 					return RoomJob.FollowUpResult.none();
 				}
-				if (isBlank(expectedTurnId) || !expectedTurnId.equals(game.getCurTurnId())) {
-					log.warn(
-						"drawingTimeout ignored due to turnId mismatch. roomId={}, expectedTurnId={}, currentTurnId={}",
-						room.getRoomId(),
-						expectedTurnId,
-						game.getCurTurnId()
-					);
-					return RoomJob.FollowUpResult.none();
-				}
-				if (game.getTurnPhase() != Game.TurnPhase.DRAWING) {
-					return RoomJob.FollowUpResult.none();
-				}
-				// turnId와 phase를 함께 확인해서 오래된 타이머 실행을 자연스럽게 무시한다.
 				return RoomJob.FollowUpResult.followUp(
-					turnEnd(game.getCurTurnId(), "DRAWING_TIMEOUT"),
+					turnEnd("DRAWING_TIMEOUT"),
 					null,
 					null
 				);
@@ -696,48 +608,21 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	 * 종료 가능한 턴 phase만 결과 phase로 전이하고 경량 결과 이벤트(205)를 전파한다.
 	 * 결과 화면 유지 시간 이후 별도 follow-up에서 READY 전환과 다음 진행을 결정한다.
 	 */
-	@Override
-	public RoomJob turnEnd(String expectedTurnId, String endReason) {
+	private RoomJob turnEnd(String endReason) {
 		return new RoomJob(
 			room -> {
 				// 턴 결과 상태를 먼저 확정하고, 다음 진행은 결과 화면 종료 후 최신 상태로 판단한다.
-				Game game = resolveActivePlayingGame(room);
-				if (game == null) {
+				if (!validatePlayingTurn(
+					room,
+					RoundPhase.PLAYING,
+					TurnPhase.STARTING,
+					TurnPhase.WORD_CHOICE,
+					TurnPhase.DRAWING
+				)) {
 					return RoomJob.FollowUpResult.none();
 				}
-				if (isBlank(expectedTurnId) || !expectedTurnId.equals(game.getCurTurnId())) {
-					log.warn(
-						"turnEnd ignored due to turnId mismatch. roomId={}, expectedTurnId={}, currentTurnId={}",
-						room.getRoomId(),
-						expectedTurnId,
-						game.getCurTurnId()
-					);
-					return RoomJob.FollowUpResult.none();
-				}
+				Game game = room.getGame();
 				TurnPhase turnPhase = game.getTurnPhase();
-				if (turnPhase == TurnPhase.TURN_RESULT) {
-					log.debug("turnEnd ignored because turn is already in result phase. roomId={}, turnId={}",
-						room.getRoomId(), game.getCurTurnId());
-					return RoomJob.FollowUpResult.none();
-				}
-				if (game.getRoundPhase() != RoundPhase.PLAYING) {
-					log.warn(
-						"turnEnd ignored because round is not playing. roomId={}, turnId={}, roundPhase={}",
-						room.getRoomId(),
-						game.getCurTurnId(),
-						game.getRoundPhase()
-					);
-					return RoomJob.FollowUpResult.none();
-				}
-				if (!isEndableTurnPhase(turnPhase)) {
-					log.warn(
-						"turnEnd ignored because turn phase is not endable. roomId={}, turnId={}, turnPhase={}",
-						room.getRoomId(),
-						game.getCurTurnId(),
-						turnPhase
-					);
-					return RoomJob.FollowUpResult.none();
-				}
 
 				String resolvedEndReason = isBlank(endReason) ? "UNKNOWN" : endReason;
 				game.finishTurnResult();
@@ -761,7 +646,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 				);
 				return new RoomJob.FollowUpResult(
 					new RoomJob.FollowUp(
-						turnResultEnd(game.getCurTurnId()),
+						turnResultEnd(),
 						TURN_RESULT_DELAY,
 						TURN_RESULT_TIMER_KEY
 					),
@@ -772,31 +657,14 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 		);
 	}
 
-	private RoomJob turnResultEnd(String expectedTurnId) {
+	private RoomJob turnResultEnd() {
 		return new RoomJob(
 			room -> {
-				Game game = resolveActivePlayingGame(room);
-				if (game == null) {
+				if (!validatePlayingGame(room)
+					|| !validateTurnPhase(room, TurnPhase.TURN_RESULT)) {
 					return RoomJob.FollowUpResult.none();
 				}
-				if (isBlank(expectedTurnId) || !expectedTurnId.equals(game.getCurTurnId())) {
-					log.warn(
-						"turnResultEnd ignored due to turnId mismatch. roomId={}, expectedTurnId={}, currentTurnId={}",
-						room.getRoomId(),
-						expectedTurnId,
-						game.getCurTurnId()
-					);
-					return RoomJob.FollowUpResult.none();
-				}
-				if (game.getTurnPhase() != TurnPhase.TURN_RESULT) {
-					log.warn(
-						"turnResultEnd ignored because turn is not in result phase. roomId={}, turnId={}, turnPhase={}",
-						room.getRoomId(),
-						game.getCurTurnId(),
-						game.getTurnPhase()
-					);
-					return RoomJob.FollowUpResult.none();
-				}
+				Game game = room.getGame();
 
 				RoomJob nextJob;
 				String nextAction;
@@ -851,47 +719,51 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	}
 
 	private Map<String, Object> turnEndPayload(Game game, String endReason) {
-		Map<String, Object> payload = new HashMap<>();
-		payload.put("gid", game.getGameId());
-		payload.put("turn", game.getCurTurnId());
-		payload.put("reason", endReason);
-		if (!isBlank(game.getAnswerWord())) {
-			payload.put("answer", game.getAnswerWord());
+		boolean hasAnswer = !isBlank(game.getAnswerWord());
+		boolean hasEarnedPoints = game.getEarnedPoints() != null && !game.getEarnedPoints().isEmpty();
+		if (hasAnswer && hasEarnedPoints) {
+			return Map.of(
+				"gid", game.getGameId(),
+				"turn", game.getCurTurnId(),
+				"reason", endReason,
+				"answer", game.getAnswerWord(),
+				"earnedPoints", Map.copyOf(game.getEarnedPoints())
+			);
 		}
-		if (game.getEarnedPoints() != null && !game.getEarnedPoints().isEmpty()) {
-			payload.put("earnedPoints", Map.copyOf(game.getEarnedPoints()));
+		if (hasAnswer) {
+			return Map.of(
+				"gid", game.getGameId(),
+				"turn", game.getCurTurnId(),
+				"reason", endReason,
+				"answer", game.getAnswerWord()
+			);
 		}
-		return payload;
-	}
-
-	private boolean isEndableTurnPhase(TurnPhase turnPhase) {
-		return turnPhase == TurnPhase.STARTING
-			|| turnPhase == TurnPhase.WORD_CHOICE
-			|| turnPhase == TurnPhase.DRAWING;
-	}
-
-	/**
-	 * 라운드 종료 처리 확장 포인트.
-	 * 현재 구현은 비어 있으며 notImplemented 경로로만 동작한다.
-	 */
-	@Override
-	public RoomJob roundEnd(int expectedRoundNo) {
-		// 아직 미구현 상태이므로 공통 no-op 핸들러로 위임한다.
-		return notImplemented("roundEnd");
+		if (hasEarnedPoints) {
+			return Map.of(
+				"gid", game.getGameId(),
+				"turn", game.getCurTurnId(),
+				"reason", endReason,
+				"earnedPoints", Map.copyOf(game.getEarnedPoints())
+			);
+		}
+		return Map.of(
+			"gid", game.getGameId(),
+			"turn", game.getCurTurnId(),
+			"reason", endReason
+		);
 	}
 
 	/**
 	 * 게임 결과 화면을 시작한다.
 	 * 최종 점수 이벤트(206)를 전파하고 결과 화면 유지 후 resultViewEnd follow-up을 예약한다.
 	 */
-	@Override
-	public RoomJob gameEnd() {
+	private RoomJob gameEnd() {
 		return new RoomJob(
 			room -> {
-				Game game = room.getGame();
-				if (game == null) {
+				if (!validateGameExists(room)) {
 					return RoomJob.FollowUpResult.none();
 				}
+				Game game = room.getGame();
 				if (game.isGameResult()) {
 					log.debug("gameEnd ignored because game is already in result phase. roomId={}, gameId={}",
 						room.getRoomId(), game.getGameId());
@@ -930,7 +802,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 					GAME_RESULT_DELAY.toSeconds()
 				);
 				return RoomJob.FollowUpResult.followUp(
-					resultViewEnd(game.getGameId()),
+					resultViewEnd(),
 					GAME_RESULT_DELAY,
 					GAME_RESULT_TIMER_KEY
 				);
@@ -941,36 +813,13 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	/**
 	 * 현재 게임 결과 화면을 종료한다.
 	 */
-	@Override
-	public RoomJob resultViewEnd() {
-		return resultViewEnd(null);
-	}
-
-	private RoomJob resultViewEnd(String expectedGameId) {
+	private RoomJob resultViewEnd() {
 		return new RoomJob(
 			room -> {
+				if (!validateGamePhase(room, GamePhase.GAME_RESULT)) {
+					return RoomJob.FollowUpResult.none();
+				}
 				Game game = room.getGame();
-				if (game == null) {
-					return RoomJob.FollowUpResult.none();
-				}
-				if (!isBlank(expectedGameId) && !expectedGameId.equals(game.getGameId())) {
-					log.warn(
-						"resultViewEnd ignored due to gameId mismatch. roomId={}, expectedGameId={}, currentGameId={}",
-						room.getRoomId(),
-						expectedGameId,
-						game.getGameId()
-					);
-					return RoomJob.FollowUpResult.none();
-				}
-				if (!game.isGameResult()) {
-					log.warn(
-						"resultViewEnd ignored because game is not in result phase. roomId={}, gameId={}, gamePhase={}",
-						room.getRoomId(),
-						game.getGameId(),
-						game.getGamePhase()
-					);
-					return RoomJob.FollowUpResult.none();
-				}
 
 				String gameId = game.getGameId();
 				boolean quickRestart = shouldAutoRestartQuickGame(room);
@@ -1001,22 +850,27 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	}
 
 	private Map<String, Object> gameResultPayload(Game game) {
-		Map<String, Object> payload = new HashMap<>();
-		payload.put("gid", game.getGameId());
-		payload.put("resultSec", GAME_RESULT_DELAY.toSeconds());
 		if (game.getTotalPoints() != null && !game.getTotalPoints().isEmpty()) {
-			payload.put("totalPoints", Map.copyOf(game.getTotalPoints()));
+			return Map.of(
+				"gid", game.getGameId(),
+				"resultSec", GAME_RESULT_DELAY.toSeconds(),
+				"totalPoints", Map.copyOf(game.getTotalPoints())
+			);
 		}
-		return payload;
+		return Map.of(
+			"gid", game.getGameId(),
+			"resultSec", GAME_RESULT_DELAY.toSeconds()
+		);
 	}
 
 	private Map<String, Object> resultViewEndPayload(String gameId, boolean quickRestart) {
-		Map<String, Object> payload = new HashMap<>();
-		payload.put("gid", gameId);
 		if (quickRestart) {
-			payload.put("restartSec", QUICK_RESTART_DELAY.toSeconds());
+			return Map.of(
+				"gid", gameId,
+				"restartSec", QUICK_RESTART_DELAY.toSeconds()
+			);
 		}
-		return payload;
+		return Map.of("gid", gameId);
 	}
 
 	private boolean shouldAutoRestartQuickGame(Room room) {
@@ -1147,7 +1001,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 				}
 
 				return RoomJob.FollowUpResult.followUp(
-					turnEnd(game.getCurTurnId(), endReason),
+					turnEnd(endReason),
 					null,
 					null
 				);
@@ -1205,13 +1059,11 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 		Integer choiceIndex,
 		String selectionReason
 	) {
-		if (room == null || game == null) {
+		if (!validatePlayingRound(room, RoundPhase.PLAYING)) {
 			return RoomJob.FollowUpResult.none();
 		}
-		if (game.getGamePhase() != GamePhase.PLAYING || game.getRoundPhase() != RoundPhase.PLAYING) {
-			return RoomJob.FollowUpResult.none();
-		}
-		if (game.getTurnPhase() != Game.TurnPhase.WORD_CHOICE) {
+		game = room.getGame();
+		if (!hasTurnPhase(game.getTurnPhase(), TurnPhase.WORD_CHOICE)) {
 			log.warn(
 				"startDrawingPhase ignored because turn is not in word-choice phase. roomId={}, turnId={}, turnPhase={}",
 				room.getRoomId(),
@@ -1286,7 +1138,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 
 		return new RoomJob.FollowUpResult(
 			new RoomJob.FollowUp(
-				drawingTimeout(game.getCurTurnId()),
+				drawingTimeout(),
 				Duration.ofSeconds(drawSec),
 				DRAWING_TIMER_KEY
 			),
@@ -1342,17 +1194,91 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	}
 
 	/**
-	 * 현재 방의 활성 게임을 조회한다.
-	 * 게임이 없거나 PLAYING 상태가 아니면 경고 로그를 남기고 null을 반환한다.
+	 * 게임 존재 여부를 검증한다.
 	 */
-	private Game resolveActivePlayingGame(Room room) {
-		// 방의 게임이 PLAYING 상태인지 확인하고 아니면 null을 반환한다.
-		Game game = room.getGame();
-		if (game == null || !game.isPlaying()) {
-			log.warn("room job ignored because game is not active. roomId={}", room.getRoomId());
-			return null;
+	private boolean validateGameExists(Room room) {
+		Game game = room == null ? null : room.getGame();
+		if (game != null) {
+			return true;
 		}
-		return game;
+		log.warn("room job ignored because game is missing. roomId={}", room == null ? null : room.getRoomId());
+		return false;
+	}
+
+	private boolean validateGamePhase(Room room, GamePhase requiredGamePhase) {
+		if (!validateGameExists(room)) {
+			return false;
+		}
+		Game game = room.getGame();
+		if (game.getGamePhase() == requiredGamePhase) {
+			return true;
+		}
+		log.warn(
+			"room job ignored because game phase mismatched. roomId={}, requiredGamePhase={}, currentGamePhase={}",
+			room.getRoomId(),
+			requiredGamePhase,
+			game.getGamePhase()
+		);
+		return false;
+	}
+
+	private boolean validatePlayingGame(Room room) {
+		return validateGamePhase(room, GamePhase.PLAYING);
+	}
+
+	private boolean validateRoundPhase(Room room, RoundPhase requiredRoundPhase) {
+		if (!validateGameExists(room)) {
+			return false;
+		}
+		Game game = room.getGame();
+		if (game.getRoundPhase() == requiredRoundPhase) {
+			return true;
+		}
+		log.warn(
+			"room job ignored because round phase mismatched. roomId={}, requiredRoundPhase={}, currentRoundPhase={}",
+			room.getRoomId(),
+			requiredRoundPhase,
+			game.getRoundPhase()
+		);
+		return false;
+	}
+
+	private boolean validatePlayingRound(Room room, RoundPhase requiredRoundPhase) {
+		return validatePlayingGame(room)
+			&& validateRoundPhase(room, requiredRoundPhase);
+	}
+
+	private boolean validateTurnPhase(Room room, TurnPhase... allowedTurnPhases) {
+		if (!validateGameExists(room)) {
+			return false;
+		}
+		Game game = room.getGame();
+		if (hasTurnPhase(game.getTurnPhase(), allowedTurnPhases)) {
+			return true;
+		}
+		log.warn(
+			"room job ignored because turn phase mismatched. roomId={}, currentTurnPhase={}",
+			room.getRoomId(),
+			game.getTurnPhase()
+		);
+		return false;
+	}
+
+	private boolean validatePlayingTurn(Room room, RoundPhase requiredRoundPhase, TurnPhase... allowedTurnPhases) {
+		return validatePlayingRound(room, requiredRoundPhase)
+			&& validateTurnPhase(room, allowedTurnPhases);
+	}
+
+	private boolean hasTurnPhase(TurnPhase currentTurnPhase, TurnPhase... allowedTurnPhases) {
+		if (currentTurnPhase == null || allowedTurnPhases == null || allowedTurnPhases.length == 0) {
+			return false;
+		}
+		for (TurnPhase allowedTurnPhase : allowedTurnPhases) {
+			if (currentTurnPhase == allowedTurnPhase) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	/**
@@ -1410,6 +1336,21 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 		return true;
 	}
 
+	private boolean rejectIfGameAlreadyExists(Room room, Participant participant, String reason, String message) {
+		if (room == null || room.getGame() == null) {
+			return false;
+		}
+		if (participant != null) {
+			sendErrorToParticipant(
+				participant,
+				1999,
+				reason,
+				message
+			);
+		}
+		return true;
+	}
+
 	/**
 	 * 현재 턴에서 drawer를 제외한 모든 참가자가 정답했는지 계산한다.
 	 * EndMode.TIME_OR_ALL_CORRECT 판정에 사용된다.
@@ -1451,19 +1392,6 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 			return "";
 		}
 		return value.trim().toLowerCase(Locale.ROOT);
-	}
-
-	/**
-	 * 미구현 잡용 기본 핸들러를 만든다.
-	 * 실제 동작은 하지 않고 경고 로그만 남긴 뒤 no-op 결과를 반환한다.
-	 */
-	private RoomJob notImplemented(String jobName) {
-		return new RoomJob(
-				room -> {
-					// 미구현 잡은 경고 로그만 남기고 no-op으로 종료한다.
-					log.warn("room job not implemented yet. job={}, roomId={}", jobName, room.getRoomId());
-					return RoomJob.FollowUpResult.none();
-				});
 	}
 
 	/**
@@ -1586,11 +1514,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 					return RoomJob.FollowUpResult.none();
 				}
 
-				if(room.getGame() != null){
-					sendErrorToParticipant(
-						requestedParticipant,
-						1999, "INVALID_REQUEST", 
-						"game already started");
+				if (rejectIfGameAlreadyExists(room, requestedParticipant, "INVALID_REQUEST", "game already started")) {
 					return RoomJob.FollowUpResult.none();
 				}
 					

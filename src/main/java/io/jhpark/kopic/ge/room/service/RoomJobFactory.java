@@ -9,27 +9,7 @@ public interface RoomJobFactory {
 
 	RoomJob leave(String sessionId);
 
-	RoomJob closeIfEmpty();
-
-	RoomJob nextRound();
-
-	RoomJob nextTurn();
-
-	RoomJob openWordChoiceWindow(String expectedTurnId);
-
 	RoomJob explicitWordChoice(String sessionId, int choiceIndex);
-
-	RoomJob wordChoiceTimeout(String expectedTurnId);
-
-	RoomJob drawingTimeout(String expectedTurnId);
-
-	RoomJob turnEnd(String expectedTurnId, String endReason);
-
-	RoomJob roundEnd(int expectedRoundNo);
-
-	RoomJob gameEnd();
-
-	RoomJob resultViewEnd();
 
 	RoomJob drawStroke(String sessionId, JsonNode stroke);
 
