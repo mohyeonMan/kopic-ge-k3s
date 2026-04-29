@@ -27,6 +27,7 @@ public final class Room {
 	private volatile String hostSessionId;
 	private volatile Setting setting;
 	private volatile Game game;
+	private volatile Instant autoRestartAt;
 	private final Map<String, Participant> participants = new ConcurrentHashMap<>();
 	private final Instant createdAt;
 	private final List<JsonNode> currentCanvas = new ArrayList<>();
@@ -58,6 +59,7 @@ public final class Room {
 	}
 
 	public Game startGame() {
+		this.autoRestartAt = null;
 		this.game = Game.start(this.setting.copy());
 
 		return this.game;
@@ -65,5 +67,13 @@ public final class Room {
 
 	public void endGame() {
 		this.game = null;
+	}
+
+	public void setAutoRestartAt(Instant autoRestartAt) {
+		this.autoRestartAt = Objects.requireNonNull(autoRestartAt, "autoRestartAt");
+	}
+
+	public void clearAutoRestartAt() {
+		this.autoRestartAt = null;
 	}
 }

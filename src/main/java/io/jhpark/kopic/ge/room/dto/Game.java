@@ -25,6 +25,7 @@ public class Game {
     private GamePhase gamePhase;
     private LinkedHashMap<String, Integer> totalPoints;
     private Instant startedAt;
+    private Instant deadlineAt;
     
     // 라운드 상태
     private int curRoundIndex;
@@ -120,6 +121,14 @@ public class Game {
 
     public void finishGameResult() {
         this.gamePhase = GamePhase.GAME_RESULT;
+    }
+
+    public void setDeadlineAt(Instant deadlineAt) {
+        this.deadlineAt = Objects.requireNonNull(deadlineAt, "deadlineAt");
+    }
+
+    public void clearDeadlineAt() {
+        this.deadlineAt = null;
     }
 
     public void readyNextTurn(){

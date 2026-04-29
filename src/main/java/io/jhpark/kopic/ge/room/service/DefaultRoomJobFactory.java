@@ -137,6 +137,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 					boolean shouldAutoStartQuickGame =
 						room.getRoomType() == Room.QUICK_ROOM_TYPE
 							&& room.getGame() == null
+							&& room.getAutoRestartAt() == null
 							&& room.getParticipants().size() >= 2;
 					if (shouldAutoStartQuickGame) {
 						log.info(
@@ -200,13 +201,16 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 				// 빈 방이 되면 다른 진행 로직은 생략하고 종료 예약만 남긴다.
 				if (participants.isEmpty()) {
 					Game game = room.getGame();
-					String cancelTimerKey = null;
+					String cancelTimerKey = room.getAutoRestartAt() != null
+						? QUICK_RESTART_TIMER_KEY
+						: null;
 					if (game != null) {
 						// stale game 상태를 남기지 않도록 게임/타이머를 같이 정리한다.
 						cancelTimerKey = GAME_TIMER_CLEAR_KEY;
 						game.removeParticipant(sessionId);
 						room.endGame();
 					}
+					room.clearAutoRestartAt();
 					room.transferHost(null);
 					room.getCurrentCanvas().clear();
 					log.info(
@@ -283,6 +287,9 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 							"DRAWER_LEFT"
 						);
 					}
+				} else if (room.getAutoRestartAt() != null && participants.size() < 2) {
+					cancelTimerKey = QUICK_RESTART_TIMER_KEY;
+					room.clearAutoRestartAt();
 				}
 
 				log.info("leave broadcast sent. roomId={}, leftSessionId={}, remainingParticipants={}",
@@ -341,6 +348,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 			room -> {
 				// 시작 권한과 최소 인원 등을 검증한 뒤 게임을 생성하고 라운드 시작을 예약한다.
 				boolean isQuickRoom = room.getRoomType() == Room.QUICK_ROOM_TYPE;
+				boolean hadAutoRestartDeadline = room.getAutoRestartAt() != null;
 				Participant requestedParticipant = resolveParticipant(room, sessionId);
 				if (!isQuickRoom && requestedParticipant == null) {
 					return RoomJob.FollowUpResult.none();
@@ -353,6 +361,9 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 
 				// 2명이상일때 시작가능.
 				if (room.getParticipants().size() < 2) {
+					if (isQuickRoom && requestedParticipant == null && hadAutoRestartDeadline) {
+						room.clearAutoRestartAt();
+					}
 					if (requestedParticipant != null) {
 						sendErrorToParticipant(
 							requestedParticipant,
@@ -370,6 +381,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 				}
 
 				Game newGame =room.startGame();
+				newGame.setDeadlineAt(Instant.now().plus(START_ROUND_DELAY));
 
 				Map<String, String> payload = Map.of(
 					"gid", newGame.getGameId()
@@ -385,10 +397,14 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 					newGame.getGameId(),
 					room.getParticipants().size()
 				);
-				return RoomJob.FollowUpResult.followUp(
-					nextRound(),
-					START_ROUND_DELAY,
-					START_ROUND_TIMER_KEY
+				return new RoomJob.FollowUpResult(
+					new RoomJob.FollowUp(
+						nextRound(),
+						START_ROUND_DELAY,
+						START_ROUND_TIMER_KEY
+					),
+					hadAutoRestartDeadline ? QUICK_RESTART_TIMER_KEY : null,
+					RoomJob.FollowUpAction.NONE
 				);
 			}
 		);
@@ -408,6 +424,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 					return RoomJob.FollowUpResult.none();
 				}
 				Game game = room.getGame();
+				game.clearDeadlineAt();
 
 				if (!game.hasNextRound()) {
 					log.info(
@@ -512,6 +529,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 				List<String> words = resolveWordChoices(game.getGameSetting().wordChoiceCount());
 				game.openWordCandidate(words);
 				int choiceSec = normalizePositiveSeconds(game.getGameSetting().wordChoiceSec(), 10);
+				game.setDeadlineAt(Instant.now().plusSeconds(choiceSec));
 
 				Map<String, Object> payload =Map.of(
 					"sid", game.getCurDrawerSid(),
@@ -638,6 +656,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 
 				String resolvedEndReason = isBlank(endReason) ? "UNKNOWN" : endReason;
 				game.finishTurnResult();
+				game.setDeadlineAt(Instant.now().plus(TURN_RESULT_DELAY));
 				if (!game.hasNextTurn()) {
 					game.finishRoundResult();
 				}
@@ -677,6 +696,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 					return RoomJob.FollowUpResult.none();
 				}
 				Game game = room.getGame();
+				game.clearDeadlineAt();
 
 				RoomJob nextJob;
 				String nextAction;
@@ -802,6 +822,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 				}
 
 				game.finishGameResult();
+				game.setDeadlineAt(Instant.now().plus(GAME_RESULT_DELAY));
 				Map<String, Object> payload = gameResultPayload(game);
 				for (Participant participant : room.getParticipants().values()) {
 					sendToParticipant(participant, 206, payload);
@@ -895,6 +916,11 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 		String reason,
 		boolean quickRestart
 	) {
+		if (quickRestart) {
+			room.setAutoRestartAt(Instant.now().plus(QUICK_RESTART_DELAY));
+		} else {
+			room.clearAutoRestartAt();
+		}
 		Map<String, Object> payload = returnToLobbyPayload(gameId, reason, quickRestart);
 		room.endGame();
 		room.getCurrentCanvas().clear();
@@ -1133,6 +1159,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 		room.getCurrentCanvas().clear();
 		game.startDrawing(resolvedChoiceIndex);
 		int drawSec = normalizePositiveSeconds(game.getGameSetting().drawSec(), 40);
+		game.setDeadlineAt(Instant.now().plusSeconds(drawSec));
 
 		Map<String, Object> drawerPayload = Map.of(
 			"gid", game.getGameId(),
