@@ -281,15 +281,15 @@ public class DefaultEventHandler {
 	}
 
 	private void handleGameStart(WsEvent event) {
-		JsonNode payload = event.envelope().p();
-		if (!validateRequired(event, payload, "roomId")) {
-			return;
-		}
+		// JsonNode payload = event.envelope().p();
+		// if (!validateRequired(event, payload, "roomId")) {
+		// 	return;
+		// }
 
-		String roomId = eventMapper.text(payload, "roomId");
+		// String roomId = eventMapper.text(payload, "roomId");
 
 		RoomSubmitResult result = roomService.startGame(
-			roomId,
+			event.roomId(),
 			event.senderSessionId()
 		);
 		emitResult(event, result);

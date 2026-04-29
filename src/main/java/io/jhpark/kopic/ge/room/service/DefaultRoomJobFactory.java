@@ -40,12 +40,16 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	private static final String GAME_TIMER_CLEAR_KEY = GAME_TIMER_KEY_PREFIX + "*";
 	private static final String START_ROUND_TIMER_KEY = GAME_TIMER_KEY_PREFIX + "start-round";
 	private static final Duration START_ROUND_DELAY = Duration.ofSeconds(3);
+	private static final String NEXT_TURN_TIMER_KEY = GAME_TIMER_KEY_PREFIX + "next-turn";
+	private static final Duration NEXT_TURN_DELAY = Duration.ofSeconds(3);
+	private static final String OPEN_WORD_CHOICE_TIMER_KEY = GAME_TIMER_KEY_PREFIX + "open-word-choice";
+	private static final Duration OPEN_WORD_CHOICE_DELAY = Duration.ofSeconds(3);
 	private static final String WORD_CHOICE_TIMER_KEY = GAME_TIMER_KEY_PREFIX + "word-choice";
 	private static final String DRAWING_TIMER_KEY = GAME_TIMER_KEY_PREFIX + "drawing";
 	private static final String TURN_RESULT_TIMER_KEY = GAME_TIMER_KEY_PREFIX + "turn-result";
-	private static final Duration TURN_RESULT_DELAY = Duration.ofSeconds(2);
+	private static final Duration TURN_RESULT_DELAY = Duration.ofSeconds(5);
 	private static final String GAME_RESULT_TIMER_KEY = GAME_TIMER_KEY_PREFIX + "game-result";
-	private static final Duration GAME_RESULT_DELAY = Duration.ofSeconds(5);
+	private static final Duration GAME_RESULT_DELAY = Duration.ofSeconds(10);
 	private static final String QUICK_RESTART_TIMER_KEY = GAME_TIMER_KEY_PREFIX + "quick-restart";
 	private static final Duration QUICK_RESTART_DELAY = Duration.ofSeconds(3);
 	private static final String RETURN_TO_LOBBY_REASON_RESULT_END = "RESULT_END";
@@ -414,7 +418,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	 * 다음 라운드를 시작한다.
 	 * 현재 게임이 활성 상태인지, 다음 라운드가 남아 있는지 확인한 뒤
 	 * 라운드 상태/그리는 순서를 초기화하고 라운드 시작 이벤트(202)를 전파한다.
-	 * 라운드 시작 직후에는 즉시 nextTurn follow-up으로 이어진다.
+	 * 라운드 시작 후 짧은 대기시간을 둔 뒤 nextTurn follow-up으로 이어진다.
 	 */
 	private RoomJob nextRound() {
 		return new RoomJob(
@@ -456,11 +460,12 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 					game.getCurRoundIndex(),
 					game.getCurRoundDrawerSids()
 				);
+				game.setDeadlineAt(Instant.now().plus(NEXT_TURN_DELAY));
 				
 				return RoomJob.FollowUpResult.followUp(
 					nextTurn(),
-					null,
-					null
+					NEXT_TURN_DELAY,
+					NEXT_TURN_TIMER_KEY
 				);
 			}
 		);
@@ -469,7 +474,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	/**
 	 * 다음 턴 준비를 수행한다.
 	 * 현재 라운드의 drawer 목록을 기준으로 Game.startTurn() 전이를 시도하고
-	 * 성공하면 캔버스를 비운 뒤 단어 선택 창 오픈 잡(openWordChoiceWindow)으로 연결한다.
+	 * 턴 시작 이벤트(209)를 전파한 뒤 짧은 대기시간 후 단어 선택 창 오픈 잡(openWordChoiceWindow)으로 연결한다.
 	 * 전이 불가 상태(phase 불일치, 인덱스 범위 문제)는 예외를 잡아 무시한다.
 	 */
 	private RoomJob nextTurn() {
@@ -480,6 +485,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 					return RoomJob.FollowUpResult.none();
 				}
 				Game game = room.getGame();
+				game.clearDeadlineAt();
 
 				if(!game.hasNextTurn()){
 					log.info(
@@ -502,10 +508,23 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 					game.getCurTurnIndex(),
 					game.getCurDrawerSid()
 				);
+				game.setDeadlineAt(Instant.now().plus(OPEN_WORD_CHOICE_DELAY));
+
+				Map<String, Object> payload = Map.of(
+					"gid", game.getGameId(),
+					"round", game.getCurRoundIndex(),
+					"turn", game.getCurTurnId(),
+					"turnIndex", game.getCurTurnIndex(),
+					"drawerSid", game.getCurDrawerSid(),
+					"turnStartSec", OPEN_WORD_CHOICE_DELAY.toSeconds()
+				);
+				for (Participant participant : room.getParticipants().values()) {
+					sendToParticipant(participant, 209, payload);
+				}
 				return RoomJob.FollowUpResult.followUp(
 					openWordChoiceWindow(),
-					null,
-					null
+					OPEN_WORD_CHOICE_DELAY,
+					OPEN_WORD_CHOICE_TIMER_KEY
 				);
 			}
 		);
@@ -524,6 +543,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 					return RoomJob.FollowUpResult.none();
 				}
 				Game game = room.getGame();
+				game.clearDeadlineAt();
 
 				// 단어 후보는 현재 룸 설정값을 기준으로 턴마다 새로 만든다.
 				List<String> words = resolveWordChoices(game.getGameSetting().wordChoiceCount());
@@ -1106,7 +1126,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 
 	/**
 	 * 단어 선택 단계를 종료하고 DRAWING 단계로 전환한다.
-	 * 정답 단어를 확정한 뒤 턴 상태 이벤트(203)를 전파하고
+	 * 정답 단어를 확정한 뒤 그리기 시작 이벤트(208)를 전파하고
 	 * drawingTimeout 타이머를 등록하며, 기존 word-choice 타이머 취소 키를 반환한다.
 	 */
 	private RoomJob.FollowUpResult startDrawingPhase(
@@ -1177,9 +1197,9 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 
 		for (Participant participant : room.getParticipants().values()) {
 			if (participant.sessionId().equals(game.getCurDrawerSid()))
-				sendToParticipant(participant, 203, drawerPayload);
+				sendToParticipant(participant, 208, drawerPayload);
 			else
-				sendToParticipant(participant, 203, guesserPayload);
+				sendToParticipant(participant, 208, guesserPayload);
 		}
 
 		log.info(
