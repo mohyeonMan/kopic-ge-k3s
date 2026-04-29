@@ -675,6 +675,9 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 				TurnPhase turnPhase = game.getTurnPhase();
 
 				String resolvedEndReason = isBlank(endReason) ? "UNKNOWN" : endReason;
+				applyDrawerBonus(game);
+				applyEarnedPointsToTotalPoints(game);
+				game.consumeCurrentTurnDrawer();
 				game.finishTurnResult();
 				game.setDeadlineAt(Instant.now().plus(TURN_RESULT_DELAY));
 				if (!game.hasNextTurn()) {
@@ -1000,7 +1003,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	/**
 	 * 채팅 메시지를 처리한다.
 	 * DRAWING 구간이 아니면 일반 채팅 브로드캐스트만 수행하고,
-	 * DRAWING 구간에서는 정답 판정, 점수 반영, 턴 종료 조건(첫 정답/전원 정답)을 함께 처리한다.
+	 * DRAWING 구간에서는 정답 판정, 시간 기반 점수 예약, 정답자 공지, 턴 종료 조건(첫 정답/전원 정답)을 함께 처리한다.
 	 * 이미 정답한 사용자의 메시지는 sealed 채널 규칙으로 제한 전파한다.
 	 */
 	@Override
@@ -1015,9 +1018,22 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 				}
 
 				Game game = room.getGame();
+				boolean drawerSealedPhase = game != null
+					&& game.isPlaying()
+					&& hasTurnPhase(
+						game.getTurnPhase(),
+						Game.TurnPhase.STARTING,
+						Game.TurnPhase.WORD_CHOICE,
+						Game.TurnPhase.DRAWING
+					);
 				boolean inDrawingPhase = game != null
 					&& game.isPlaying()
 					&& game.getTurnPhase() == Game.TurnPhase.DRAWING;
+
+				if (drawerSealedPhase && sessionId.equals(game.getCurDrawerSid())) {
+					broadcastSealedChat(room, game, sessionId, text);
+					return RoomJob.FollowUpResult.none();
+				}
 
 				// 로비/라운드 대기/결과 화면 등 DRAWING 외 구간은 일반 채팅으로 전체 전파한다.
 				if (!inDrawingPhase) {
@@ -1025,46 +1041,43 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 					return RoomJob.FollowUpResult.none();
 				}
 
-				// 그리는 사람 채팅은 힌트 유출 방지를 위해 sealed 채널로만 전파한다.
-				if (sessionId.equals(game.getCurDrawerSid())) {
-					broadcastSealedChat(room, game, sessionId, text);
-					return RoomJob.FollowUpResult.none();
-				}
+				EndMode endMode = game.getGameSetting().endMode();
+				boolean isAllCorrectMode = endMode == EndMode.TIME_OR_ALL_CORRECT;
 
 				boolean alreadyCorrect = game.getEarnedPoints().containsKey(sessionId);
-				if (isBlank(text) || isBlank(game.getAnswerWord())) {
-					if (alreadyCorrect) {
-						// 이미 정답자는 정답자+그리는 사람에게만 비공개 채팅으로 전송한다.
+				if (alreadyCorrect) {
+					if (isAllCorrectMode) {
 						broadcastSealedChat(room, game, sessionId, text);
 					} else {
 						broadcastChatToAllExceptSender(room, sessionId, text);
 					}
+					return RoomJob.FollowUpResult.none();
+				}
+
+				if (isBlank(text) || isBlank(game.getAnswerWord())) {
+					broadcastChatToAllExceptSender(room, sessionId, text);
 					return RoomJob.FollowUpResult.none();
 				}
 
 				String normalizedText = normalizeText(text);
 				String normalizedAnswer = normalizeText(game.getAnswerWord());
 
-				// 정답이 아니면 일반 채팅 전파. 단, 이미 정답자는 정답자+그리는 사람에게만 보인다.
+				// 아직 정답하지 않은 추측자의 메시지에서만 정답 여부를 판정한다.
 				if (!normalizedText.equals(normalizedAnswer)) {
-					if (alreadyCorrect) {
-						broadcastSealedChat(room, game, sessionId, text);
-					} else {
-						broadcastChatToAllExceptSender(room, sessionId, text);
-					}
+					broadcastChatToAllExceptSender(room, sessionId, text);
 					return RoomJob.FollowUpResult.none();
 				}
 
-				// 정답 메시지는 채팅으로 방송하지 않고 점수/종료 판정만 처리한다.
-				Integer existingPoint = game.getEarnedPoints().putIfAbsent(sessionId, 1);
+				// 정답 메시지는 채팅으로 방송하지 않고 이번 턴 결과용 점수 예약과 종료 판정만 처리한다.
+				int guessScore = calculateGuessScore(game);
+				Integer existingPoint = game.getEarnedPoints().putIfAbsent(sessionId, guessScore);
 				if (existingPoint != null) {
 					return RoomJob.FollowUpResult.none();
 				}
-				game.getTotalPoints().merge(sessionId, 1, Integer::sum);
+				broadcastCorrectAnswer(room, game, sessionId);
 
 				boolean shouldEndTurn = false;
 				String endReason = "CORRECT_ANSWER";
-				EndMode endMode = game.getGameSetting().endMode();
 				if (endMode == EndMode.FIRST_CORRECT) {
 					shouldEndTurn = true;
 					endReason = "FIRST_CORRECT";
@@ -1121,6 +1134,20 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 				"t", text,
 				"sealed", 1
 			));
+		}
+	}
+
+	/**
+	 * 정답자를 전 참가자에게 알린다.
+	 * 점수는 확정하지 않고 누가 맞췄는지만 즉시 알린다.
+	 */
+	private void broadcastCorrectAnswer(Room room, Game game, String sessionId) {
+		Map<String, Object> payload = Map.of(
+			"gid", game.getGameId(),
+			"sid", sessionId
+		);
+		for (Participant participant : room.getParticipants().values()) {
+			sendToParticipant(participant, 210, payload);
 		}
 	}
 
@@ -1449,6 +1476,66 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 			return false;
 		}
 		return solvedGuessers >= requiredGuessers;
+	}
+
+	/**
+	 * 현재 DRAWING 남은 시간을 기반으로 정답자 점수를 계산한다.
+	 * 현재 턴 drawSec을 100%로 보고 남은 시간 비율만큼 최대 20점을 부여한다.
+	 */
+	private int calculateGuessScore(Game game) {
+		if (game == null || game.getDeadlineAt() == null || game.getGameSetting() == null) {
+			return 1;
+		}
+		int drawSec = normalizePositiveSeconds(game.getGameSetting().drawSec(), 40);
+		long totalDrawMs = drawSec * 1000L;
+		long remainingMs = Duration.between(Instant.now(), game.getDeadlineAt()).toMillis();
+		if (remainingMs < 0) {
+			remainingMs = 0;
+		}
+		if (totalDrawMs <= 0) {
+			return 1;
+		}
+		double rawScore = (remainingMs * 20.0) / totalDrawMs;
+		int scaledScore = (int) Math.ceil(rawScore);
+		return Math.max(1, Math.min(20, scaledScore));
+	}
+
+	/**
+	 * 이번 턴에 정답자가 한 명 이상 있었으면 drawer 보너스를 부여한다.
+	 * drawer 보너스는 고정 10점이다.
+	 * 이 점수 역시 턴 결과 공개 전까지 earnedPoints에만 보관한다.
+	 */
+	private void applyDrawerBonus(Game game) {
+		if (game == null
+			|| isBlank(game.getCurDrawerSid())
+			|| game.getEarnedPoints() == null
+			|| game.getEarnedPoints().isEmpty()) {
+			return;
+		}
+
+		int drawerBonusScore = 10;
+		Integer existingScore = game.getEarnedPoints().putIfAbsent(game.getCurDrawerSid(), drawerBonusScore);
+		if (existingScore != null) {
+			return;
+		}
+	}
+
+	/**
+	 * earnedPoints에 쌓아둔 이번 턴 점수를 totalPoints에 반영한다.
+	 * 점수판 누적은 턴 결과가 시작될 때 한 번만 수행한다.
+	 */
+	private void applyEarnedPointsToTotalPoints(Game game) {
+		if (game == null || game.getEarnedPoints() == null || game.getEarnedPoints().isEmpty()) {
+			return;
+		}
+		for (Map.Entry<String, Integer> entry : game.getEarnedPoints().entrySet()) {
+			String sessionId = entry.getKey();
+			Integer score = entry.getValue();
+			if (isBlank(sessionId) || score == null || score <= 0) {
+				continue;
+			}
+			game.getTotalPoints().merge(sessionId, score, Integer::sum);
+		}
 	}
 
 	/**

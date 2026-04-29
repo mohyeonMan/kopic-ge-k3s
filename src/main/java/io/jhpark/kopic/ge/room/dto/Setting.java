@@ -25,7 +25,7 @@ public record Setting(
 			10,
 			1,
 			DrawerOrderMode.JOIN_ORDER,
-			EndMode.FIRST_CORRECT
+			EndMode.TIME_OR_ALL_CORRECT
 		);
 	}
 

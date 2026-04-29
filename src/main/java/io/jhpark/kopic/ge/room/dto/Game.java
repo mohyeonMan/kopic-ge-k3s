@@ -84,7 +84,7 @@ public class Game {
             throw new IllegalArgumentException("turnIndex out of range");
         }
 
-        String nextDrawerSid = this.curRoundDrawerSids.poll();
+        String nextDrawerSid = this.curRoundDrawerSids.peek();
         if (nextDrawerSid == null) {
             throw new IllegalArgumentException("turnIndex out of range");
         }
@@ -96,6 +96,16 @@ public class Game {
         this.wordCandidates = List.of();
         this.answerWord = null;
         this.earnedPoints = new HashMap<>();
+    }
+
+    public void consumeCurrentTurnDrawer() {
+        if (this.curRoundDrawerSids == null || this.curRoundDrawerSids.isEmpty()) {
+            return;
+        }
+        if (this.curDrawerSid == null || this.curDrawerSid.isBlank()) {
+            return;
+        }
+        this.curRoundDrawerSids.remove(this.curDrawerSid);
     }
 
     public void openWordCandidate(List<String> words) {
@@ -168,6 +178,9 @@ public class Game {
         }
         if (this.earnedPoints != null) {
             this.earnedPoints.remove(sessionId);
+        }
+        if (sessionId.equals(this.curDrawerSid)) {
+            this.curDrawerSid = null;
         }
         if (this.curRoundDrawerSids == null || this.curRoundDrawerSids.isEmpty()) {
             return;
