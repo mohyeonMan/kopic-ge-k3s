@@ -3,3 +3,13 @@ spring:
     name: kopic-ge
   profiles:
     default: local
+
+kopic:
+  game-timer:
+    close-if-empty: 30s
+    start-round: 5s
+    next-turn: 5s
+    open-word-choice: 5s
+    turn-result: 7s
+    game-result: 10s
+    quick-restart: 5s

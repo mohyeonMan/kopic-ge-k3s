@@ -1,5 +1,6 @@
 package io.jhpark.kopic.ge.room.service;
 
+import io.jhpark.kopic.ge.common.config.GameTimerProperties;
 import io.jhpark.kopic.ge.common.dto.KopicEnvelope;
 import io.jhpark.kopic.ge.common.util.CommonMapper;
 import io.jhpark.kopic.ge.common.util.TimeFormatUtil;
@@ -35,29 +36,23 @@ import org.springframework.stereotype.Component;
 public class DefaultRoomJobFactory implements RoomJobFactory {
 
 	private static final String CLOSE_IF_EMPTY_TIMER_KEY = "close-if-empty";
-	private static final Duration CLOSE_IF_EMPTY_DELAY = Duration.ofSeconds(30);
 	private static final String GAME_TIMER_KEY_PREFIX = "game:";
 	private static final String GAME_TIMER_CLEAR_KEY = GAME_TIMER_KEY_PREFIX + "*";
 	private static final String START_ROUND_TIMER_KEY = GAME_TIMER_KEY_PREFIX + "start-round";
-	private static final Duration START_ROUND_DELAY = Duration.ofSeconds(3);
 	private static final String NEXT_TURN_TIMER_KEY = GAME_TIMER_KEY_PREFIX + "next-turn";
-	private static final Duration NEXT_TURN_DELAY = Duration.ofSeconds(3);
 	private static final String OPEN_WORD_CHOICE_TIMER_KEY = GAME_TIMER_KEY_PREFIX + "open-word-choice";
-	private static final Duration OPEN_WORD_CHOICE_DELAY = Duration.ofSeconds(3);
 	private static final String WORD_CHOICE_TIMER_KEY = GAME_TIMER_KEY_PREFIX + "word-choice";
 	private static final String DRAWING_TIMER_KEY = GAME_TIMER_KEY_PREFIX + "drawing";
 	private static final String TURN_RESULT_TIMER_KEY = GAME_TIMER_KEY_PREFIX + "turn-result";
-	private static final Duration TURN_RESULT_DELAY = Duration.ofSeconds(5);
 	private static final String GAME_RESULT_TIMER_KEY = GAME_TIMER_KEY_PREFIX + "game-result";
-	private static final Duration GAME_RESULT_DELAY = Duration.ofSeconds(10);
 	private static final String QUICK_RESTART_TIMER_KEY = GAME_TIMER_KEY_PREFIX + "quick-restart";
-	private static final Duration QUICK_RESTART_DELAY = Duration.ofSeconds(3);
 	private static final String RETURN_TO_LOBBY_REASON_RESULT_END = "RESULT_END";
 	private static final String RETURN_TO_LOBBY_REASON_NOT_ENOUGH_PARTICIPANTS = "NOT_ENOUGH_PARTICIPANTS";
 
 	private final CommonMapper commonMapper;
 	private final GeEventPublisher geEventPublisher;
 	private final WordPoolProvider wordPoolProvider;
+	private final GameTimerProperties gameTimerProperties;
 
 	/**
 	 * 참가자 입장 요청을 처리한다.
@@ -196,19 +191,19 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 					room.clearAutoRestartAt();
 					room.transferHost(null);
 					room.getCurrentCanvas().clear();
-					log.info(
-						"room became empty after leave. roomId={}, sessionId={}, closeDelaySeconds={}",
-						room.getRoomId(),
-						sessionId,
-						CLOSE_IF_EMPTY_DELAY.toSeconds()
-					);
-					return new RoomJob.FollowUpResult(
-						new RoomJob.FollowUp(
-							closeIfEmpty(),
-							CLOSE_IF_EMPTY_DELAY,
-							CLOSE_IF_EMPTY_TIMER_KEY
-						),
-						cancelTimerKey,
+						log.info(
+							"room became empty after leave. roomId={}, sessionId={}, closeDelaySeconds={}",
+							room.getRoomId(),
+							sessionId,
+							gameTimerProperties.closeIfEmpty().toSeconds()
+						);
+						return new RoomJob.FollowUpResult(
+							new RoomJob.FollowUp(
+								closeIfEmpty(),
+								gameTimerProperties.closeIfEmpty(),
+								CLOSE_IF_EMPTY_TIMER_KEY
+							),
+							cancelTimerKey,
 						isQuickRoom
 							? RoomJob.FollowUpAction.REMOVE_QUICK_JOIN_CANDIDATE
 							: RoomJob.FollowUpAction.NONE
@@ -364,7 +359,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 				}
 
 				Game newGame =room.startGame();
-				newGame.setDeadlineAt(Instant.now().plus(START_ROUND_DELAY));
+				newGame.setDeadlineAt(Instant.now().plus(gameTimerProperties.startRound()));
 
 				Map<String, String> payload = Map.of(
 					"gid", newGame.getGameId()
@@ -383,7 +378,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 				return new RoomJob.FollowUpResult(
 					new RoomJob.FollowUp(
 						nextRound(),
-						START_ROUND_DELAY,
+						gameTimerProperties.startRound(),
 						START_ROUND_TIMER_KEY
 					),
 					hadAutoRestartDeadline ? QUICK_RESTART_TIMER_KEY : null,
@@ -439,11 +434,11 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 					game.getCurRoundIndex(),
 					game.getCurRoundDrawerSids()
 				);
-				game.setDeadlineAt(Instant.now().plus(NEXT_TURN_DELAY));
+				game.setDeadlineAt(Instant.now().plus(gameTimerProperties.nextTurn()));
 				
 				return RoomJob.FollowUpResult.followUp(
 					nextTurn(),
-					NEXT_TURN_DELAY,
+					gameTimerProperties.nextTurn(),
 					NEXT_TURN_TIMER_KEY
 				);
 			}
@@ -487,7 +482,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 					game.getCurTurnIndex(),
 					game.getCurDrawerSid()
 				);
-				game.setDeadlineAt(Instant.now().plus(OPEN_WORD_CHOICE_DELAY));
+				game.setDeadlineAt(Instant.now().plus(gameTimerProperties.openWordChoice()));
 
 				Map<String, Object> payload = Map.of(
 					"gid", game.getGameId(),
@@ -495,14 +490,14 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 					"turn", game.getCurTurnId(),
 					"turnIndex", game.getCurTurnIndex(),
 					"drawerSid", game.getCurDrawerSid(),
-					"turnStartSec", OPEN_WORD_CHOICE_DELAY.toSeconds()
+					"turnStartSec", gameTimerProperties.openWordChoice().toSeconds()
 				);
 				for (Participant participant : room.getParticipants().values()) {
 					sendToParticipant(participant, 209, payload);
 				}
 				return RoomJob.FollowUpResult.followUp(
 					openWordChoiceWindow(),
-					OPEN_WORD_CHOICE_DELAY,
+					gameTimerProperties.openWordChoice(),
 					OPEN_WORD_CHOICE_TIMER_KEY
 				);
 			}
@@ -658,7 +653,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 				applyEarnedPointsToTotalPoints(game);
 				game.consumeCurrentTurnDrawer();
 				game.finishTurnResult();
-				game.setDeadlineAt(Instant.now().plus(TURN_RESULT_DELAY));
+				game.setDeadlineAt(Instant.now().plus(gameTimerProperties.turnResult()));
 				if (!game.hasNextTurn()) {
 					game.finishRoundResult();
 				}
@@ -675,12 +670,12 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 					game.getCurRoundIndex(),
 					game.getCurTurnId(),
 					resolvedEndReason,
-					TURN_RESULT_DELAY.toSeconds()
+					gameTimerProperties.turnResult().toSeconds()
 				);
 				return new RoomJob.FollowUpResult(
 					new RoomJob.FollowUp(
 						turnResultEnd(),
-						TURN_RESULT_DELAY,
+						gameTimerProperties.turnResult(),
 						TURN_RESULT_TIMER_KEY
 					),
 					resolveTurnTimerCancelKey(turnPhase),
@@ -824,7 +819,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 				}
 
 				game.finishGameResult();
-				game.setDeadlineAt(Instant.now().plus(GAME_RESULT_DELAY));
+				game.setDeadlineAt(Instant.now().plus(gameTimerProperties.gameResult()));
 				Map<String, Object> payload = gameResultPayload(game);
 				for (Participant participant : room.getParticipants().values()) {
 					sendToParticipant(participant, 206, payload);
@@ -834,11 +829,11 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 					"game result started. roomId={}, gameId={}, resultDelaySec={}",
 					room.getRoomId(),
 					game.getGameId(),
-					GAME_RESULT_DELAY.toSeconds()
+					gameTimerProperties.gameResult().toSeconds()
 				);
 				return RoomJob.FollowUpResult.followUp(
 					resultViewEnd(),
-					GAME_RESULT_DELAY,
+					gameTimerProperties.gameResult(),
 					GAME_RESULT_TIMER_KEY
 				);
 			}
@@ -870,14 +865,14 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 					room.getRoomId(),
 					gameId,
 					quickRestart,
-					quickRestart ? QUICK_RESTART_DELAY.toSeconds() : 0
+					quickRestart ? gameTimerProperties.quickRestart().toSeconds() : 0
 				);
 				if (!quickRestart) {
 					return RoomJob.FollowUpResult.none();
 				}
 				return RoomJob.FollowUpResult.followUp(
 					startGame(null),
-					QUICK_RESTART_DELAY,
+					gameTimerProperties.quickRestart(),
 					QUICK_RESTART_TIMER_KEY
 				);
 			}
@@ -888,13 +883,13 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 		if (game.getTotalPoints() != null && !game.getTotalPoints().isEmpty()) {
 			return Map.of(
 				"gid", game.getGameId(),
-				"resultSec", GAME_RESULT_DELAY.toSeconds(),
+				"resultSec", gameTimerProperties.gameResult().toSeconds(),
 				"totalPoints", Map.copyOf(game.getTotalPoints())
 			);
 		}
 		return Map.of(
 			"gid", game.getGameId(),
-			"resultSec", GAME_RESULT_DELAY.toSeconds()
+			"resultSec", gameTimerProperties.gameResult().toSeconds()
 		);
 	}
 
@@ -903,7 +898,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 			return Map.of(
 				"gid", gameId,
 				"reason", reason,
-				"restartSec", QUICK_RESTART_DELAY.toSeconds()
+				"restartSec", gameTimerProperties.quickRestart().toSeconds()
 			);
 		}
 		return Map.of(
@@ -919,7 +914,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 		boolean quickRestart
 	) {
 		if (quickRestart) {
-			room.setAutoRestartAt(Instant.now().plus(QUICK_RESTART_DELAY));
+			room.setAutoRestartAt(Instant.now().plus(gameTimerProperties.quickRestart()));
 		} else {
 			room.clearAutoRestartAt();
 		}
