@@ -54,31 +54,10 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	private static final Duration QUICK_RESTART_DELAY = Duration.ofSeconds(3);
 	private static final String RETURN_TO_LOBBY_REASON_RESULT_END = "RESULT_END";
 	private static final String RETURN_TO_LOBBY_REASON_NOT_ENOUGH_PARTICIPANTS = "NOT_ENOUGH_PARTICIPANTS";
-	private static final List<String> DEFAULT_WORD_POOL = List.of(
-		"사과",
-		"바나나",
-		"카메라",
-		"성",
-		"커피",
-		"기타",
-		"헬멧",
-		"섬",
-		"정글",
-		"주방",
-		"사다리",
-		"랜턴",
-		"산",
-		"노트",
-		"오렌지",
-		"연필",
-		"로켓",
-		"스쿠터",
-		"거북이",
-		"창문"
-	);
 
 	private final CommonMapper commonMapper;
 	private final GeEventPublisher geEventPublisher;
+	private final WordPoolProvider wordPoolProvider;
 
 	/**
 	 * 참가자 입장 요청을 처리한다.
@@ -1254,13 +1233,12 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 
 	/**
 	 * 요청 개수에 맞는 단어 후보 목록을 만든다.
-	 * 기본 단어 풀을 섞어 상위 N개를 사용하며, 요청 개수가 풀 크기보다 크면 순환 채움한다.
+	 * 리소스 파일에서 로드한 단어 풀을 섞어 상위 N개를 사용하며, 요청 개수가 풀 크기보다 크면 순환 채움한다.
 	 */
 	private List<String> resolveWordChoices(int requestedCount) {
-		// 외부 사전 공급자가 붙기 전까지 임시 단어 풀을 사용한다.
-		// 요청 개수만큼 후보 단어를 섞어서 반환한다.
+		// 외부 리소스에서 로드한 단어 풀에서 요청 개수만큼 후보 단어를 섞어서 반환한다.
 		int targetCount = requestedCount <= 0 ? 1 : requestedCount;
-		List<String> pool = new ArrayList<>(DEFAULT_WORD_POOL);
+		List<String> pool = new ArrayList<>(wordPoolProvider.words());
 		Collections.shuffle(pool);
 		if (targetCount <= pool.size()) {
 			return List.copyOf(pool.subList(0, targetCount));
