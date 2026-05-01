@@ -4,6 +4,7 @@ public record Participant(
 	String wsNodeId,
 	String sessionId,
 	String nickname,
+	int colorIndex,
 	String joinedAt
 ) {
 }

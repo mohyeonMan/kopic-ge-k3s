@@ -61,7 +61,11 @@ public record RoomSnapshot(
 			)
 			.forEach(participant -> copiedParticipants.put(
 				participant.sessionId(),
-				new ParticipantSnapshot(participant.sessionId(), participant.nickname())
+				new ParticipantSnapshot(
+					participant.sessionId(),
+					participant.nickname(),
+					participant.colorIndex()
+				)
 			));
 		return Collections.unmodifiableMap(copiedParticipants);
 	}
@@ -87,7 +91,8 @@ public record RoomSnapshot(
 
 	public record ParticipantSnapshot(
 		String sessionId,
-		String nickname
+		String nickname,
+		int colorIndex
 	) {
 	}
 

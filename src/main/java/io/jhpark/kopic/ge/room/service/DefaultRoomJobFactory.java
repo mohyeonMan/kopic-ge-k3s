@@ -48,6 +48,8 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	private static final String QUICK_RESTART_TIMER_KEY = GAME_TIMER_KEY_PREFIX + "quick-restart";
 	private static final String RETURN_TO_LOBBY_REASON_RESULT_END = "RESULT_END";
 	private static final String RETURN_TO_LOBBY_REASON_NOT_ENOUGH_PARTICIPANTS = "NOT_ENOUGH_PARTICIPANTS";
+	private static final int MIN_COLOR_INDEX = 1;
+	private static final int MAX_COLOR_INDEX = 20;
 
 	private final CommonMapper commonMapper;
 	private final GeEventPublisher geEventPublisher;
@@ -78,19 +80,20 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 						return RoomJob.FollowUpResult.none();
 					}
 
+					Map<String, Participant> participants = room.getParticipants();
+					// 정원 초과인 경우 참가자 추가 없이 에러 이벤트만 응답한다.
+					if (participants.size() >= room.getCapacity()) {
+						sendErrorToSession(wsNodeId, sessionId, 1999, "ROOM_FULL", "room is full");
+						return RoomJob.FollowUpResult.none();
+					}
+
 					Participant newParticipant = new Participant(
 						wsNodeId,
 						sessionId,
 						nickname,
+						resolveNextColorIndex(participants),
 						TimeFormatUtil.now()
 					);
-					
-					Map<String, Participant> participants = room.getParticipants();
-					// 정원 초과인 경우 참가자 추가 없이 에러 이벤트만 응답한다.
-					if (participants.size() >= room.getCapacity()) {
-						sendErrorToParticipant(newParticipant, 1999, "ROOM_FULL", "room is full");
-						return RoomJob.FollowUpResult.none();
-					}
 
 					// 방 상태에 참가자를 반영한 뒤, 입장자 본인에게 최신 스냅샷을 전달한다.
 					participants.put(sessionId, newParticipant);
@@ -105,7 +108,8 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 					for (Participant participant : participants.values()) {
 						sendToParticipant(participant, 301, Map.of(
 								"sessionId", sessionId,
-								"nickname", nickname));
+								"nickname", nickname,
+								"colorIndex", newParticipant.colorIndex()));
 					}
 
 					log.info("current room participants: {}", room.getParticipants().keySet());
@@ -1578,6 +1582,47 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	}
 
 	/**
+	 * 현재 방 참가자들의 색상 사용 현황을 기준으로 다음 colorIndex를 선택한다.
+	 * 사용되지 않은 색이 있으면 그중 랜덤으로, 모두 사용 중이면 최소 사용 색 중 랜덤으로 고른다.
+	 */
+	private int resolveNextColorIndex(Map<String, Participant> participants) {
+		int[] usageCounts = new int[MAX_COLOR_INDEX + 1];
+		if (participants != null && !participants.isEmpty()) {
+			for (Participant participant : participants.values()) {
+				if (participant == null) {
+					continue;
+				}
+				int colorIndex = participant.colorIndex();
+				if (colorIndex < MIN_COLOR_INDEX || colorIndex > MAX_COLOR_INDEX) {
+					continue;
+				}
+				usageCounts[colorIndex] += 1;
+			}
+		}
+
+		List<Integer> candidateColorIndexes = new ArrayList<>();
+		for (int colorIndex = MIN_COLOR_INDEX; colorIndex <= MAX_COLOR_INDEX; colorIndex += 1) {
+			if (usageCounts[colorIndex] == 0) {
+				candidateColorIndexes.add(colorIndex);
+			}
+		}
+		if (!candidateColorIndexes.isEmpty()) {
+			return candidateColorIndexes.get(ThreadLocalRandom.current().nextInt(candidateColorIndexes.size()));
+		}
+
+		int minUsageCount = Integer.MAX_VALUE;
+		for (int colorIndex = MIN_COLOR_INDEX; colorIndex <= MAX_COLOR_INDEX; colorIndex += 1) {
+			minUsageCount = Math.min(minUsageCount, usageCounts[colorIndex]);
+		}
+		for (int colorIndex = MIN_COLOR_INDEX; colorIndex <= MAX_COLOR_INDEX; colorIndex += 1) {
+			if (usageCounts[colorIndex] == minUsageCount) {
+				candidateColorIndexes.add(colorIndex);
+			}
+		}
+		return candidateColorIndexes.get(ThreadLocalRandom.current().nextInt(candidateColorIndexes.size()));
+	}
+
+	/**
 	 * joinedAt 문자열을 Instant로 파싱한다.
 	 * 파싱 실패 시 정렬 우선순위를 뒤로 보내기 위해 Instant.MAX를 반환한다.
 	 */
@@ -1633,6 +1678,16 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 						),
 						TimeFormatUtil.now()
 				)
+		);
+	}
+
+	private void sendErrorToSession(String wsNodeId, String sessionId, int errorEventCode, String reason,
+		String message) {
+		sendErrorToParticipant(
+			new Participant(wsNodeId, sessionId, null, MIN_COLOR_INDEX, TimeFormatUtil.now()),
+			errorEventCode,
+			reason,
+			message
 		);
 	}
 
