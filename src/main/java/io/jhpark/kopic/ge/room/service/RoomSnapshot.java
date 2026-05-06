@@ -108,6 +108,7 @@ public record RoomSnapshot(
 		Game.TurnPhase turnPhase,
 		String drawerSid,
 		Integer answerLength,
+		String hintPattern,
 		String answer,
 		Map<String, Integer> earnedPoints,
 		Map<String, Integer> totalPoints
@@ -119,6 +120,7 @@ public record RoomSnapshot(
 				return null;
 			}
 			Integer answerLength = null;
+			String hintPattern = null;
 			String answer = null;
 			List<String> drawerSids = null;
 			List<String> correctAnswerSids = List.of();
@@ -142,6 +144,7 @@ public record RoomSnapshot(
 			}
 			if (game.getTurnPhase() == Game.TurnPhase.DRAWING && game.getAnswerWord() != null) {
 				answerLength = game.getAnswerWord().length();
+				hintPattern = game.getHintPattern();
 			}
 			if (game.getTurnPhase() == Game.TurnPhase.TURN_RESULT) {
 				if (game.getAnswerWord() != null && !game.getAnswerWord().isBlank()) {
@@ -167,6 +170,7 @@ public record RoomSnapshot(
 				game.getTurnPhase(),
 				game.getCurDrawerSid(),
 				answerLength,
+				hintPattern,
 				answer,
 				earnedPoints,
 				totalPoints

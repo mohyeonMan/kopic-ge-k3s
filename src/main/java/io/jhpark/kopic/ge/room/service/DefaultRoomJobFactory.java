@@ -45,12 +45,16 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	private static final String NEXT_TURN_TIMER_KEY = GAME_TIMER_KEY_PREFIX + "next-turn";
 	private static final String OPEN_WORD_CHOICE_TIMER_KEY = GAME_TIMER_KEY_PREFIX + "open-word-choice";
 	private static final String WORD_CHOICE_TIMER_KEY = GAME_TIMER_KEY_PREFIX + "word-choice";
-	private static final String DRAWING_TIMER_KEY = GAME_TIMER_KEY_PREFIX + "drawing";
+	private static final String DRAWING_PHASE_TIMER_KEY_PREFIX = GAME_TIMER_KEY_PREFIX + "drawing-phase:";
+	private static final String DRAWING_TIMER_KEY = DRAWING_PHASE_TIMER_KEY_PREFIX + "timeout";
+	private static final String HINT_REVEAL_TIMER_KEY = DRAWING_PHASE_TIMER_KEY_PREFIX + "hint";
+	private static final String DRAWING_PHASE_TIMER_CLEAR_KEY = DRAWING_PHASE_TIMER_KEY_PREFIX + "*";
 	private static final String TURN_RESULT_TIMER_KEY = GAME_TIMER_KEY_PREFIX + "turn-result";
 	private static final String GAME_RESULT_TIMER_KEY = GAME_TIMER_KEY_PREFIX + "game-result";
 	private static final String QUICK_RESTART_TIMER_KEY = GAME_TIMER_KEY_PREFIX + "quick-restart";
 	private static final String RETURN_TO_LOBBY_REASON_RESULT_END = "RESULT_END";
 	private static final String RETURN_TO_LOBBY_REASON_NOT_ENOUGH_PARTICIPANTS = "NOT_ENOUGH_PARTICIPANTS";
+	private static final int HINT_REVEAL_EVENT_CODE = 211;
 	private static final int MIN_COLOR_INDEX = 1;
 	private static final int MAX_COLOR_INDEX = 20;
 
@@ -368,8 +372,9 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 				Game newGame =room.startGame();
 				newGame.setDeadlineAt(Instant.now().plus(gameTimerProperties.startRound()));
 
-				Map<String, String> payload = Map.of(
-					"gid", newGame.getGameId()
+				Map<String, Object> payload = Map.of(
+					"gid", newGame.getGameId(),
+					"gameStartSec", gameTimerProperties.startRound().toSeconds()
 				);
 
 				for (Participant participant : room.getParticipants().values()) {
@@ -427,7 +432,8 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 					"gid", game.getGameId(),
 					"round", game.getCurRoundIndex(),
 					"roundId", game.getCurRoundId(),
-					"drawerSids", game.getCurRoundDrawerSids()
+					"drawerSids", game.getCurRoundDrawerSids(),
+					"roundStartSec", gameTimerProperties.nextTurn().toSeconds()
 				);
 
 				for (Participant participant : room.getParticipants().values()) {
@@ -635,6 +641,44 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	}
 
 	/**
+	 * DRAWING 중 힌트를 주기적으로 공개한다.
+	 * 설정값(hintRevealSec, hintLetterCount)에 따라 힌트를 공개하고,
+	 * 더 공개할 글자가 남아있으면 같은 타이머 키로 다음 tick을 재예약한다.
+	 */
+	private RoomJob hintRevealTick() {
+		return new RoomJob(
+			room -> {
+				if (!validatePlayingTurn(room, RoundPhase.PLAYING, TurnPhase.DRAWING)) {
+					return RoomJob.FollowUpResult.none();
+				}
+				Game game = room.getGame();
+				if (game == null || game.getGameSetting() == null) {
+					return RoomJob.FollowUpResult.none();
+				}
+				int hintRevealSec = game.getGameSetting().hintRevealSec();
+				int hintLetterCount = game.getGameSetting().hintLetterCount();
+				if (hintRevealSec <= 0 || hintLetterCount <= 0) {
+					return RoomJob.FollowUpResult.none();
+				}
+
+				int revealedCount = game.revealHintLetters(hintLetterCount);
+				if (revealedCount > 0) {
+					broadcastHintPattern(room, game);
+				}
+				if (!game.hasPendingHintReveals()) {
+					return RoomJob.FollowUpResult.none();
+				}
+
+				return RoomJob.FollowUpResult.followUp(
+					hintRevealTick(),
+					Duration.ofSeconds(hintRevealSec),
+					HINT_REVEAL_TIMER_KEY
+				);
+			}
+		);
+	}
+
+	/**
 	 * 턴 종료를 처리한다.
 	 * 종료 가능한 턴 phase만 결과 phase로 전이하고 경량 결과 이벤트(205)를 전파한다.
 	 * 결과 화면 유지 시간 이후 별도 follow-up에서 READY 전환과 다음 진행을 결정한다.
@@ -665,7 +709,8 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 					game.finishRoundResult();
 				}
 
-				Map<String, Object> payload = turnEndPayload(game, resolvedEndReason);
+				long turnEndSec = gameTimerProperties.turnResult().toSeconds();
+				Map<String, Object> payload = turnEndPayload(game, resolvedEndReason, turnEndSec);
 				for (Participant participant : room.getParticipants().values()) {
 					sendToParticipant(participant, 205, payload);
 				}
@@ -677,7 +722,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 					game.getCurRoundIndex(),
 					game.getCurTurnId(),
 					resolvedEndReason,
-					gameTimerProperties.turnResult().toSeconds()
+					turnEndSec
 				);
 				return new RoomJob.FollowUpResult(
 					new RoomJob.FollowUp(
@@ -754,7 +799,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 		);
 	}
 
-	private Map<String, Object> turnEndPayload(Game game, String endReason) {
+	private Map<String, Object> turnEndPayload(Game game, String endReason, long turnEndSec) {
 		boolean hasAnswer = !isBlank(game.getAnswerWord());
 		boolean hasEarnedPoints = game.getEarnedPoints() != null && !game.getEarnedPoints().isEmpty();
 		if (hasAnswer && hasEarnedPoints) {
@@ -762,6 +807,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 				"gid", game.getGameId(),
 				"turn", game.getCurTurnId(),
 				"reason", endReason,
+				"turnEndSec", turnEndSec,
 				"answer", game.getAnswerWord(),
 				"earnedPoints", Map.copyOf(game.getEarnedPoints())
 			);
@@ -771,6 +817,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 				"gid", game.getGameId(),
 				"turn", game.getCurTurnId(),
 				"reason", endReason,
+				"turnEndSec", turnEndSec,
 				"answer", game.getAnswerWord()
 			);
 		}
@@ -779,13 +826,15 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 				"gid", game.getGameId(),
 				"turn", game.getCurTurnId(),
 				"reason", endReason,
+				"turnEndSec", turnEndSec,
 				"earnedPoints", Map.copyOf(game.getEarnedPoints())
 			);
 		}
 		return Map.of(
 			"gid", game.getGameId(),
 			"turn", game.getCurTurnId(),
-			"reason", endReason
+			"reason", endReason,
+			"turnEndSec", turnEndSec
 		);
 	}
 
@@ -1132,6 +1181,26 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 		}
 	}
 
+	private void broadcastHintPattern(Room room, Game game) {
+		if (room == null || game == null || game.getHintPattern() == null) {
+			return;
+		}
+		Map<String, Object> payload = Map.of(
+			"gid", game.getGameId(),
+			"turn", game.getCurTurnId(),
+			"drawerSid", game.getCurDrawerSid(),
+			"hintPattern", game.getHintPattern(),
+			"revealedCount", game.getHintRevealedCount(),
+			"totalRevealCount", game.getHintTotalRevealCount()
+		);
+		for (Participant participant : room.getParticipants().values()) {
+			if (participant.sessionId().equals(game.getCurDrawerSid())) {
+				continue;
+			}
+			sendToParticipant(participant, HINT_REVEAL_EVENT_CODE, payload);
+		}
+	}
+
 	/**
 	 * 단어 선택 단계를 종료하고 DRAWING 단계로 전환한다.
 	 * 정답 단어를 확정한 뒤 그리기 시작 이벤트(208)를 전파하고
@@ -1188,6 +1257,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 		game.startDrawing(resolvedChoiceIndex);
 		int drawSec = normalizePositiveSeconds(game.getGameSetting().drawSec(), 40);
 		game.setDeadlineAt(Instant.now().plusSeconds(drawSec));
+		String hintPattern = game.getHintPattern();
 
 		Map<String, Object> drawerPayload = Map.of(
 			"gid", game.getGameId(),
@@ -1200,7 +1270,8 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 			"gid", game.getGameId(),
 			"drawSec", drawSec,
 			"drawerSid", game.getCurDrawerSid(),
-			"answerLength", game.getAnswerWord().length()
+			"answerLength", game.getAnswerWord().length(),
+			"hintPattern", hintPattern == null ? "" : hintPattern
 		);
 
 		for (Participant participant : room.getParticipants().values()) {
@@ -1221,16 +1292,23 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 			selectionReason
 		);
 
-		return new RoomJob.FollowUpResult(
-			new RoomJob.FollowUp(
-				drawingTimeout(),
-				Duration.ofSeconds(drawSec),
-				DRAWING_TIMER_KEY
-			),
-			// 직접 선택/자동 선택 시 남아있는 단어선택 타이머를 반드시 무효화한다.
-			WORD_CHOICE_TIMER_KEY,
-			RoomJob.FollowUpAction.NONE
-		);
+		List<RoomJob.FollowUp> followUps = new ArrayList<>();
+		followUps.add(new RoomJob.FollowUp(
+			drawingTimeout(),
+			Duration.ofSeconds(drawSec),
+			DRAWING_TIMER_KEY
+		));
+		int hintRevealSec = game.getGameSetting().hintRevealSec();
+		int hintLetterCount = game.getGameSetting().hintLetterCount();
+		if (hintRevealSec > 0 && hintLetterCount > 0 && game.hasPendingHintReveals()) {
+			followUps.add(new RoomJob.FollowUp(
+				hintRevealTick(),
+				Duration.ofSeconds(hintRevealSec),
+				HINT_REVEAL_TIMER_KEY
+			));
+		}
+		// 직접 선택/자동 선택 시 남아있는 단어선택 타이머를 반드시 무효화한다.
+		return RoomJob.FollowUpResult.followUps(followUps, WORD_CHOICE_TIMER_KEY);
 	}
 
 	/**
@@ -1320,7 +1398,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 			return WORD_CHOICE_TIMER_KEY;
 		}
 		if (turnPhase == Game.TurnPhase.DRAWING) {
-			return DRAWING_TIMER_KEY;
+			return DRAWING_PHASE_TIMER_CLEAR_KEY;
 		}
 		return null;
 	}

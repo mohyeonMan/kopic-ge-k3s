@@ -1,7 +1,9 @@
 package io.jhpark.kopic.ge.room.dto;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.ArrayDeque;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -9,6 +11,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Queue;
 import java.util.UUID;
+import java.util.concurrent.ThreadLocalRandom;
 import lombok.Getter;
 
 @Getter
@@ -42,6 +45,10 @@ public class Game {
     private Queue<String> recentAnswerWords;
     private Map<String, Integer> recentAnswerWordCounts;
     private String answerWord;
+    private String hintPattern;
+    private Queue<Integer> pendingHintIndexes;
+    private int hintTotalRevealCount;
+    private int hintRevealedCount;
     private String curDrawerSid;
     private Map<String, Integer> earnedPoints;
 
@@ -52,6 +59,7 @@ public class Game {
         this.totalPoints = new LinkedHashMap<>();
         this.recentAnswerWords = new ArrayDeque<>();
         this.recentAnswerWordCounts = new HashMap<>();
+        this.pendingHintIndexes = new ArrayDeque<>();
         this.startedAt = Instant.now();
         this.roundPhase = RoundPhase.READY;
     }
@@ -100,6 +108,10 @@ public class Game {
         this.curDrawerSid = nextDrawerSid;
         this.wordCandidates = List.of();
         this.answerWord = null;
+        this.hintPattern = null;
+        this.pendingHintIndexes.clear();
+        this.hintTotalRevealCount = 0;
+        this.hintRevealedCount = 0;
         this.earnedPoints = new HashMap<>();
     }
 
@@ -124,7 +136,46 @@ public class Game {
     public void startDrawing(int choiceIndex) {
         this.answerWord = this.wordCandidates.get(choiceIndex);
         trackRecentAnswerWord(this.answerWord);
+        initializeHintState(this.answerWord);
         this.turnPhase = TurnPhase.DRAWING;
+    }
+
+    public int revealHintLetters(int requestedCount) {
+        if (requestedCount <= 0
+            || this.pendingHintIndexes == null
+            || this.pendingHintIndexes.isEmpty()
+            || this.hintPattern == null
+            || this.answerWord == null) {
+            return 0;
+        }
+
+        char[] hintChars = this.hintPattern.toCharArray();
+        int revealedCount = 0;
+        while (revealedCount < requestedCount && !this.pendingHintIndexes.isEmpty()) {
+            Integer revealIndex = this.pendingHintIndexes.poll();
+            if (revealIndex == null
+                || revealIndex < 0
+                || revealIndex >= hintChars.length
+                || revealIndex >= this.answerWord.length()) {
+                continue;
+            }
+            char answerChar = this.answerWord.charAt(revealIndex);
+            if (hintChars[revealIndex] == answerChar) {
+                continue;
+            }
+            hintChars[revealIndex] = answerChar;
+            revealedCount += 1;
+        }
+
+        if (revealedCount > 0) {
+            this.hintPattern = new String(hintChars);
+            this.hintRevealedCount += revealedCount;
+        }
+        return revealedCount;
+    }
+
+    public boolean hasPendingHintReveals() {
+        return this.pendingHintIndexes != null && !this.pendingHintIndexes.isEmpty();
     }
 
     private void trackRecentAnswerWord(String word) {
@@ -149,6 +200,45 @@ public class Game {
             return;
         }
         this.recentAnswerWordCounts.put(oldestWord, oldCount - 1);
+    }
+
+    private void initializeHintState(String answer) {
+        if (answer == null || answer.isBlank()) {
+            this.hintPattern = null;
+            this.pendingHintIndexes.clear();
+            this.hintTotalRevealCount = 0;
+            this.hintRevealedCount = 0;
+            return;
+        }
+
+        List<Integer> revealableIndexes = new ArrayList<>();
+        StringBuilder patternBuilder = new StringBuilder(answer.length());
+        for (int index = 0; index < answer.length(); index += 1) {
+            char character = answer.charAt(index);
+            if (isHintRevealableChar(character)) {
+                revealableIndexes.add(index);
+                patternBuilder.append('_');
+            } else {
+                patternBuilder.append(character);
+            }
+        }
+
+        int maxRevealCount = Math.max(0, revealableIndexes.size() - 1);
+        if (revealableIndexes.size() > 1) {
+            Collections.shuffle(revealableIndexes, ThreadLocalRandom.current());
+        }
+
+        this.hintPattern = patternBuilder.toString();
+        this.pendingHintIndexes.clear();
+        for (int index = 0; index < maxRevealCount; index += 1) {
+            this.pendingHintIndexes.add(revealableIndexes.get(index));
+        }
+        this.hintTotalRevealCount = maxRevealCount;
+        this.hintRevealedCount = 0;
+    }
+
+    private boolean isHintRevealableChar(char character) {
+        return Character.isLetterOrDigit(character);
     }
 
     public void finishTurnResult() {
