@@ -2,6 +2,8 @@ package io.jhpark.kopic.ge.room.service;
 
 import io.jhpark.kopic.ge.room.dto.Room;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.function.Function;
 
 public record RoomJob(
@@ -15,18 +17,37 @@ public record RoomJob(
 	}
 
 	public record FollowUpResult(
-		FollowUp followUp,
+		List<FollowUp> followUps,
 		String cancelTimerKey,
 		FollowUpAction followUpAction
 	) {
 
 		private static final FollowUpResult NONE =
-			new FollowUpResult(null, null, FollowUpAction.NONE);
+			new FollowUpResult(List.of(), null, FollowUpAction.NONE);
 
 		public FollowUpResult {
+			if (followUps == null || followUps.isEmpty()) {
+				followUps = List.of();
+			} else {
+				List<FollowUp> sanitized = new ArrayList<>();
+				for (FollowUp followUp : followUps) {
+					if (followUp != null) {
+						sanitized.add(followUp);
+					}
+				}
+				followUps = sanitized.isEmpty() ? List.of() : List.copyOf(sanitized);
+			}
 			if (followUpAction == null) {
 				followUpAction = FollowUpAction.NONE;
 			}
+		}
+
+		public FollowUpResult(FollowUp followUp, String cancelTimerKey, FollowUpAction followUpAction) {
+			this(
+				followUp == null ? List.of() : List.of(followUp),
+				cancelTimerKey,
+				followUpAction
+			);
 		}
 
 		public static FollowUpResult none() {
@@ -40,15 +61,19 @@ public record RoomJob(
 				: new FollowUpResult(followUp, null, FollowUpAction.NONE);
 		}
 
+		public static FollowUpResult followUps(List<FollowUp> followUps, String cancelTimerKey) {
+			return new FollowUpResult(followUps, cancelTimerKey, FollowUpAction.NONE);
+		}
+
 		public static FollowUpResult cancelTimer(String timerKey) {
 			if (timerKey == null || timerKey.isBlank()) {
 				return NONE;
 			}
-			return new FollowUpResult(null, timerKey, FollowUpAction.NONE);
+			return new FollowUpResult(List.of(), timerKey, FollowUpAction.NONE);
 		}
 
 		public static FollowUpResult requestCloseIfEmpty() {
-			return new FollowUpResult(null, null, FollowUpAction.REQUEST_CLOSE_IF_EMPTY);
+			return new FollowUpResult(List.of(), null, FollowUpAction.REQUEST_CLOSE_IF_EMPTY);
 		}
 	}
 

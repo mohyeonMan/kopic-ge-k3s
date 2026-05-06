@@ -90,8 +90,10 @@ public final class DefaultRoomRunner implements RoomRunner {
 		if (applyFollowUpAction(session, result.followUpAction())) {
 			return;
 		}
-		if (result.followUp() != null) {
-			applyFollowUp(session, result.followUp());
+		if (result.followUps() != null && !result.followUps().isEmpty()) {
+			for (RoomJob.FollowUp followUp : result.followUps()) {
+				applyFollowUp(session, followUp);
+			}
 		}
 	}
 
