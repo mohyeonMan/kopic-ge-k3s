@@ -21,10 +21,13 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Queue;
+import java.util.Set;
 import java.util.concurrent.ThreadLocalRandom;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -524,7 +527,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 				game.clearDeadlineAt();
 
 				// 단어 후보는 현재 룸 설정값을 기준으로 턴마다 새로 만든다.
-				List<String> words = resolveWordChoices(game.getGameSetting().wordChoiceCount());
+				List<String> words = resolveWordChoices(game, game.getGameSetting().wordChoiceCount());
 				game.openWordCandidate(words);
 				int choiceSec = normalizePositiveSeconds(game.getGameSetting().wordChoiceSec(), 10);
 				game.setDeadlineAt(Instant.now().plusSeconds(choiceSec));
@@ -1232,21 +1235,69 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 
 	/**
 	 * 요청 개수에 맞는 단어 후보 목록을 만든다.
-	 * 리소스 파일에서 로드한 단어 풀을 섞어 상위 N개를 사용하며, 요청 개수가 풀 크기보다 크면 순환 채움한다.
+	 * 최근 정답 단어를 우선 제외하되, 개수가 부족하면 최근 단어를 오래된 순으로 다시 포함해
+	 * 전체 풀 크기가 허용하는 범위 내에서 요청 개수를 최대한 맞춘다.
 	 */
-	private List<String> resolveWordChoices(int requestedCount) {
-		// 외부 리소스에서 로드한 단어 풀에서 요청 개수만큼 후보 단어를 섞어서 반환한다.
+	private List<String> resolveWordChoices(Game game, int requestedCount) {
 		int targetCount = requestedCount <= 0 ? 1 : requestedCount;
-		List<String> pool = new ArrayList<>(wordPoolProvider.words());
-		Collections.shuffle(pool);
-		if (targetCount <= pool.size()) {
-			return List.copyOf(pool.subList(0, targetCount));
+		int totalWordCount = wordPoolProvider.totalWordCount();
+		if (totalWordCount <= 0) {
+			log.warn("word pool is empty. roomGameId={}, requestedCount={}",
+				game == null ? null : game.getGameId(), targetCount);
+			return List.of();
 		}
-		List<String> words = new ArrayList<>(targetCount);
-		for (int index = 0; index < targetCount; index++) {
-			words.add(pool.get(index % pool.size()));
+
+		int maxPossibleCount = Math.min(targetCount, totalWordCount);
+		Set<String> usedWords = game == null || game.getRecentAnswerWordCounts() == null
+			? Set.of()
+			: new HashSet<>(game.getRecentAnswerWordCounts().keySet());
+		List<String> freshWords = wordPoolProvider.pickRandomWords(maxPossibleCount, usedWords);
+
+		if (freshWords.size() >= maxPossibleCount) {
+			return freshWords;
 		}
-		return words;
+
+		List<String> resolved = new java.util.ArrayList<>(freshWords);
+		Set<String> selectedWords = new HashSet<>(resolved);
+		Queue<String> recentWords = game == null ? null : game.getRecentAnswerWords();
+		if (recentWords != null && !recentWords.isEmpty()) {
+			for (String recentWord : recentWords) {
+				if (recentWord == null || recentWord.isBlank()) {
+					continue;
+				}
+				if (!selectedWords.add(recentWord)) {
+					continue;
+				}
+				resolved.add(recentWord);
+				if (resolved.size() >= maxPossibleCount) {
+					break;
+				}
+			}
+		}
+		if (resolved.size() < maxPossibleCount) {
+			List<String> refillWords =
+				wordPoolProvider.pickRandomWords(maxPossibleCount - resolved.size(), selectedWords);
+			resolved.addAll(refillWords);
+		}
+
+		if (resolved.size() < targetCount) {
+			log.warn(
+				"word choices truncated due to total pool size. roomGameId={}, requestedCount={}, totalWordCount={}, resolvedCount={}",
+				game == null ? null : game.getGameId(),
+				targetCount,
+				totalWordCount,
+				resolved.size()
+			);
+		} else {
+			log.info(
+				"word choices replenished from recent words. roomGameId={}, requestedCount={}, freshCount={}, usedWordCount={}",
+				game == null ? null : game.getGameId(),
+				targetCount,
+				freshWords.size(),
+				usedWords.size()
+			);
+		}
+		return List.copyOf(resolved.subList(0, Math.min(maxPossibleCount, resolved.size())));
 	}
 
 	/**

@@ -18,6 +18,7 @@ public class Game {
     private static final String ROUND_ID_PREFIX = "grd_";
     private static final String TURN_ID_PREFIX = "trn_";
     private static final int ID_SUFFIX_LENGTH = 8;
+    private static final int RECENT_ANSWER_WORD_LIMIT = 100;
 
     // 게임 전체 상태
     private String gameId;
@@ -38,6 +39,8 @@ public class Game {
     private int curTurnIndex;
     private TurnPhase turnPhase;
     private List<String> wordCandidates;
+    private Queue<String> recentAnswerWords;
+    private Map<String, Integer> recentAnswerWordCounts;
     private String answerWord;
     private String curDrawerSid;
     private Map<String, Integer> earnedPoints;
@@ -47,6 +50,8 @@ public class Game {
         this.gameSetting = gameSetting.copy();
         this.gamePhase = GamePhase.PLAYING;
         this.totalPoints = new LinkedHashMap<>();
+        this.recentAnswerWords = new ArrayDeque<>();
+        this.recentAnswerWordCounts = new HashMap<>();
         this.startedAt = Instant.now();
         this.roundPhase = RoundPhase.READY;
     }
@@ -118,7 +123,32 @@ public class Game {
 
     public void startDrawing(int choiceIndex) {
         this.answerWord = this.wordCandidates.get(choiceIndex);
+        trackRecentAnswerWord(this.answerWord);
         this.turnPhase = TurnPhase.DRAWING;
+    }
+
+    private void trackRecentAnswerWord(String word) {
+        if (word == null || word.isBlank()) {
+            return;
+        }
+
+        this.recentAnswerWords.add(word);
+        this.recentAnswerWordCounts.merge(word, 1, Integer::sum);
+
+        if (this.recentAnswerWords.size() <= RECENT_ANSWER_WORD_LIMIT) {
+            return;
+        }
+
+        String oldestWord = this.recentAnswerWords.poll();
+        if (oldestWord == null) {
+            return;
+        }
+        Integer oldCount = this.recentAnswerWordCounts.get(oldestWord);
+        if (oldCount == null || oldCount <= 1) {
+            this.recentAnswerWordCounts.remove(oldestWord);
+            return;
+        }
+        this.recentAnswerWordCounts.put(oldestWord, oldCount - 1);
     }
 
     public void finishTurnResult() {
