@@ -54,7 +54,6 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	private static final String QUICK_RESTART_TIMER_KEY = GAME_TIMER_KEY_PREFIX + "quick-restart";
 	private static final String RETURN_TO_LOBBY_REASON_RESULT_END = "RESULT_END";
 	private static final String RETURN_TO_LOBBY_REASON_NOT_ENOUGH_PARTICIPANTS = "NOT_ENOUGH_PARTICIPANTS";
-	private static final int HINT_REVEAL_EVENT_CODE = 211;
 	private static final int MIN_COLOR_INDEX = 1;
 	private static final int MAX_COLOR_INDEX = 20;
 
@@ -1197,7 +1196,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 			if (participant.sessionId().equals(game.getCurDrawerSid())) {
 				continue;
 			}
-			sendToParticipant(participant, HINT_REVEAL_EVENT_CODE, payload);
+			sendToParticipant(participant, 211, payload);
 		}
 	}
 
