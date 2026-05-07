@@ -1,5 +1,6 @@
 package io.jhpark.kopic.ge.room.service;
 
+import io.jhpark.kopic.ge.common.metrics.GeMetrics;
 import io.jhpark.kopic.ge.room.dto.RoomSession;
 import io.jhpark.kopic.ge.room.registry.RoomSessionStore;
 import java.time.Instant;
@@ -17,41 +18,44 @@ public final class DefaultRoomRunner implements RoomRunner {
 	private final RoomSessionStore sessionStore;
 	private final Executor executor;
 	private final ScheduledExecutorService scheduler;
+	private final GeMetrics geMetrics;
 
 	public DefaultRoomRunner(
 		RoomSessionStore sessionStore,
 		@Qualifier("roomRunnerExecutor") Executor executor,
-		@Qualifier("roomRunnerScheduler") ScheduledExecutorService scheduler
+		@Qualifier("roomRunnerScheduler") ScheduledExecutorService scheduler,
+		GeMetrics geMetrics
 	) {
 		this.sessionStore = sessionStore;
 		this.executor = executor;
 		this.scheduler = scheduler;
+		this.geMetrics = geMetrics;
 	}
 
 	@Override
 	public RoomSubmitResult submit(String roomId, RoomJob job) {
 		if (isBlank(roomId)) {
 			log.warn("roomId is blank. reject room job.");
-			return RoomSubmitResult.rejected(
+			return recordSubmitResult(RoomSubmitResult.rejected(
 				RoomSubmitResult.Reason.INVALID_REQUEST,
 				"roomId is required"
-			);
+			));
 		}
 		if (job == null) {
 			log.warn("job is null. reject room job. roomId={}", roomId);
-			return RoomSubmitResult.rejected(
+			return recordSubmitResult(RoomSubmitResult.rejected(
 				RoomSubmitResult.Reason.INVALID_REQUEST,
 				"job is required"
-			);
+			));
 		}
 
 		RoomSession session = sessionStore.find(roomId).orElse(null);
 		if (session == null) {
 			log.warn("room job rejected because room not found. roomId={}", roomId);
-			return RoomSubmitResult.rejected(
+			return recordSubmitResult(RoomSubmitResult.rejected(
 				RoomSubmitResult.Reason.ROOM_NOT_FOUND,
 				"room not found: " + roomId
-			);
+			));
 		}
 
 		if (!session.enqueue(job)) {
@@ -59,16 +63,17 @@ public final class DefaultRoomRunner implements RoomRunner {
 				? RoomSubmitResult.Reason.MAILBOX_FULL
 				: RoomSubmitResult.Reason.ACTOR_INACTIVE;
 			log.warn("room job rejected because enqueue failed. roomId={}, reason={}", roomId, reason);
-			return RoomSubmitResult.rejected(
+			return recordSubmitResult(RoomSubmitResult.rejected(
 				reason,
 				"room mailbox is full or inactive. roomId=" + roomId
-			);
+			));
 		}
 		schedule(session);
-		return RoomSubmitResult.accepted();
+		return recordSubmitResult(RoomSubmitResult.accepted());
 	}
 
 	private void execute(RoomSession session, RoomJob job) {
+		long startedAtNanos = System.nanoTime();
 		try {
 			RoomJob.FollowUpResult result = job.action().apply(session.getRoom());
 			session.touch(Instant.now());
@@ -77,6 +82,11 @@ public final class DefaultRoomRunner implements RoomRunner {
 			log.error("room job failed. roomId={}",
 				session.getRoom().getRoomId(),
 				runtimeException);
+		} finally {
+			geMetrics.recordDuration(
+				"kopic_ge_room_job_duration_seconds",
+				System.nanoTime() - startedAtNanos
+			);
 		}
 	}
 
@@ -85,6 +95,11 @@ public final class DefaultRoomRunner implements RoomRunner {
 			return;
 		}
 		if (!isBlank(result.cancelTimerKey())) {
+			geMetrics.increment(
+				"kopic_ge_timer_cancelled_total",
+				"timer_key",
+				result.cancelTimerKey()
+			);
 			session.cancelTimer(result.cancelTimerKey());
 		}
 		if (applyFollowUpAction(session, result.followUpAction())) {
@@ -167,6 +182,11 @@ public final class DefaultRoomRunner implements RoomRunner {
 		String roomId = session.getRoom().getRoomId();
 		log.debug("room follow-up scheduled. roomId={}, timerKey={}, delayMs={}",
 			roomId, followUp.timerKey(), followUp.delay().toMillis());
+		geMetrics.increment(
+			"kopic_ge_timer_scheduled_total",
+			"timer_key",
+			followUp.timerKey()
+		);
 		session.registerTimer(
 			followUp.timerKey(),
 			scheduler.schedule(
@@ -179,6 +199,25 @@ public final class DefaultRoomRunner implements RoomRunner {
 
 	private boolean isBlank(String value) {
 		return value == null || value.isBlank();
+	}
+
+	private RoomSubmitResult recordSubmitResult(RoomSubmitResult result) {
+		String resultLabel = "rejected";
+		String reasonLabel = "unknown";
+		if (result instanceof RoomSubmitResult.Accepted) {
+			resultLabel = "accepted";
+			reasonLabel = "none";
+		} else if (result instanceof RoomSubmitResult.Rejected rejected) {
+			reasonLabel = rejected.reason() != null ? rejected.reason().name() : "unknown";
+		}
+		geMetrics.increment(
+			"kopic_ge_room_submit_total",
+			"result",
+			resultLabel,
+			"reason",
+			reasonLabel
+		);
+		return result;
 	}
 
 	private void closeActor(RoomSession session) {

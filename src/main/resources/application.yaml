@@ -13,3 +13,13 @@ kopic:
     turn-result: 7s
     game-result: 10s
     quick-restart: 5s
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+  prometheus:
+    metrics:
+      export:
+        enabled: true

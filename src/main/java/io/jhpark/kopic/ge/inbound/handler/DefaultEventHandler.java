@@ -1,13 +1,12 @@
 package io.jhpark.kopic.ge.inbound.handler;
 
-import java.time.Instant;
-
 import org.springframework.stereotype.Component;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import io.jhpark.kopic.ge.common.dto.KopicEnvelope;
+import io.jhpark.kopic.ge.common.metrics.GeMetrics;
 import io.jhpark.kopic.ge.common.util.EventMapper;
 import io.jhpark.kopic.ge.common.util.TimeFormatUtil;
 import io.jhpark.kopic.ge.inbound.dto.WsEvent;
@@ -26,25 +25,21 @@ public class DefaultEventHandler {
 	private final RoomService roomService;
 	private final GeEventPublisher geEventPublisher;
 	private final EventMapper eventMapper;
+	private final GeMetrics geMetrics;
 
 	public void handle(WsEvent event) {
 		if (!validateInboundSessionMeta(event)) {
 			log.error("invalid inbound event session meta. drop event.");
-			
 			return;
 		}
 
 		if (event == null || event.envelope() == null) {
-			geEventPublisher.publish(
+			sendRejected(
+				event.senderSessionId(),
 				event.wsNodeId(),
-				new GeEvent(
-					event.senderSessionId(),
-					new KopicEnvelope(
-						1999,
-						rejectedPayload("INVALID_REQUEST", "missing event envelope")
-					),
-					TimeFormatUtil.now()
-				)
+				1999,
+				"INVALID_REQUEST",
+				"missing event envelope"
 			);
 			return;
 		}
@@ -218,6 +213,11 @@ public class DefaultEventHandler {
 		String reason,
 		String message
 	) {
+		geMetrics.increment(
+			"kopic_ge_inbound_rejected_total",
+			"reason",
+			reason
+		);
 		if (isBlank(sessionId)) {
 			log.warn("event rejected without session target. reason={}, message={}", reason, message);
 			return;
@@ -230,7 +230,7 @@ public class DefaultEventHandler {
 					errorEventCode,
 					rejectedPayload(reason, message)
 				),
-				Instant.now().toString()
+				TimeFormatUtil.now()
 			)
 		);
 	}
@@ -251,11 +251,21 @@ public class DefaultEventHandler {
 
 	private boolean validateInboundSessionMeta(WsEvent event) {
 		if (event == null || isBlank(event.senderSessionId())) {
+			geMetrics.increment(
+				"kopic_ge_inbound_rejected_total",
+				"reason",
+				"MISSING_SENDER_SESSION_ID"
+			);
 			log.warn("drop inbound event due to missing senderSessionId. eventCode={}",
 				event != null && event.envelope() != null ? event.envelope().e() : null);
 			return false;
 		}
 		if (isBlank(event.wsNodeId())) {
+			geMetrics.increment(
+				"kopic_ge_inbound_rejected_total",
+				"reason",
+				"MISSING_WS_NODE_ID"
+			);
 			log.warn("drop inbound event due to missing wsNodeId. senderSessionId={}, eventCode={}",
 				event.senderSessionId(),
 				event.envelope() != null ? event.envelope().e() : null);

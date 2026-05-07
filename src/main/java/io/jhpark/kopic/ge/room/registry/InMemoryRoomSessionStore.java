@@ -177,6 +177,30 @@ public class InMemoryRoomSessionStore implements RoomSessionStore {
 		}
 	}
 
+	@Override
+	public int countActiveRoomsByType(int roomType) {
+		int count = 0;
+		for (RoomSession session : sessions.values()) {
+			Room room = session.getRoom();
+			if (room.getRoomType() == roomType) {
+				count += 1;
+			}
+		}
+		return count;
+	}
+
+	@Override
+	public int countParticipantsByType(int roomType) {
+		int totalParticipants = 0;
+		for (RoomSession session : sessions.values()) {
+			Room room = session.getRoom();
+			if (room.getRoomType() == roomType) {
+				totalParticipants += room.getParticipants().size();
+			}
+		}
+		return totalParticipants;
+	}
+
 	private void insertQuickRoomSorted(Room room) {
 		QuickRoomRef ref = new QuickRoomRef(room.getRoomId(), room.getCreatedAt());
 		quickRoomIds.add(ref);

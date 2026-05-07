@@ -20,4 +20,8 @@ public interface RoomSessionStore {
 	void addQuickJoinCandidate(String roomId);
 
 	void removeQuickJoinCandidate(String roomId);
+
+	int countActiveRoomsByType(int roomType);
+
+	int countParticipantsByType(int roomType);
 }

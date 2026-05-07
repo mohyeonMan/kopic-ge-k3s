@@ -2,6 +2,7 @@ package io.jhpark.kopic.ge.room.service;
 
 import io.jhpark.kopic.ge.common.config.GameTimerProperties;
 import io.jhpark.kopic.ge.common.dto.KopicEnvelope;
+import io.jhpark.kopic.ge.common.metrics.GeMetrics;
 import io.jhpark.kopic.ge.common.util.CommonMapper;
 import io.jhpark.kopic.ge.common.util.TimeFormatUtil;
 import io.jhpark.kopic.ge.outbound.dto.GeEvent;
@@ -61,6 +62,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	private final GeEventPublisher geEventPublisher;
 	private final WordPoolProvider wordPoolProvider;
 	private final GameTimerProperties gameTimerProperties;
+	private final GeMetrics geMetrics;
 
 	/**
 	 * 참가자 입장 요청을 처리한다.
@@ -362,13 +364,18 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 					}
 					return RoomJob.FollowUpResult.none();
 				}
-
-				
 				if (rejectIfGameAlreadyExists(room, requestedParticipant, "CONFLICT", "game is already active")) {
 					return RoomJob.FollowUpResult.none();
 				}
 
 				Game newGame =room.startGame();
+				geMetrics.increment(
+					"kopic_ge_game_start_total",
+					"room_type",
+					metricRoomType(room.getRoomType()),
+					"trigger",
+					isBlank(sessionId) ? "system" : "request"
+				);
 				newGame.setDeadlineAt(Instant.now().plus(gameTimerProperties.startRound()));
 
 				Map<String, Object> payload = Map.of(
@@ -662,6 +669,10 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 
 				int revealedCount = game.revealHintLetters(hintLetterCount);
 				if (revealedCount > 0) {
+					geMetrics.increment(
+						"kopic_ge_hint_reveal_total",
+						revealedCount
+					);
 					broadcastHintPattern(room, game);
 				}
 				if (!game.hasPendingHintReveals()) {
@@ -699,6 +710,11 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 				TurnPhase turnPhase = game.getTurnPhase();
 
 				String resolvedEndReason = isBlank(endReason) ? "UNKNOWN" : endReason;
+				geMetrics.increment(
+					"kopic_ge_turn_end_total",
+					"reason",
+					resolvedEndReason
+				);
 				applyDrawerBonus(game);
 				applyEarnedPointsToTotalPoints(game);
 				game.consumeCurrentTurnDrawer();
@@ -1782,7 +1798,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 				new GeEvent(
 						participant.sessionId(),
 						new KopicEnvelope(eventCode, payloadNode),
-						Instant.now().toString()));
+						TimeFormatUtil.now()));
 	}
 
 	/**
@@ -1791,6 +1807,11 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	 */
 	private void sendErrorToParticipant(Participant participant, int errorEventCode, String reason, String message) {
 		// reason/message 구조의 에러 이벤트를 단일 참가자에게 발행한다.
+		geMetrics.increment(
+			"kopic_ge_inbound_rejected_total",
+			"reason",
+			reason
+		);
 		geEventPublisher.publish(
 				participant.wsNodeId(),
 				new GeEvent(
@@ -1817,6 +1838,16 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 			reason,
 			message
 		);
+	}
+
+	private String metricRoomType(int roomType) {
+		if (roomType == Room.QUICK_ROOM_TYPE) {
+			return "quick";
+		}
+		if (roomType == Room.PRIVATE_ROOM_TYPE) {
+			return "private";
+		}
+		return "other";
 	}
 
 
