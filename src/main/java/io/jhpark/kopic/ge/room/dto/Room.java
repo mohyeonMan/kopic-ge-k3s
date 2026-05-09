@@ -58,9 +58,9 @@ public final class Room {
 		this.setting = Objects.requireNonNull(setting, "setting");
 	}
 
-	public Game startGame() {
+	public Game startGame(List<WordEntry> customWordPool) {
 		this.autoRestartAt = null;
-		this.game = Game.start(this.setting.copy());
+		this.game = Game.start(this.setting.copy(), customWordPool);
 
 		return this.game;
 	}

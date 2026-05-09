@@ -11,10 +11,12 @@ public record Setting(
 	int hintRevealSec,
 	int hintLetterCount,
 	DrawerOrderMode drawerOrderMode,
-	EndMode endMode
+	EndMode endMode,
+	CustomWordMode customWordMode,
+	String customWordsRaw
 ) {
 
-	private static final int PAYLOAD_SIZE = 8;
+	private static final int PAYLOAD_SIZE = 10;
 
 	public static Setting defaultValue() {
 		return new Setting(
@@ -25,7 +27,9 @@ public record Setting(
 			10,
 			1,
 			DrawerOrderMode.JOIN_ORDER,
-			EndMode.TIME_OR_ALL_CORRECT
+			EndMode.TIME_OR_ALL_CORRECT,
+			CustomWordMode.BASE_PLUS_CUSTOM,
+			""
 		);
 	}
 
@@ -44,7 +48,9 @@ public record Setting(
 			readInt(payload, 4, "hintRevealSec"),
 			readInt(payload, 5, "hintLetterCount"),
 			DrawerOrderMode.fromCode(readInt(payload, 6, "drawerOrderMode")),
-			EndMode.fromCode(readInt(payload, 7, "endMode"))
+			EndMode.fromCode(readInt(payload, 7, "endMode")),
+			CustomWordMode.fromCode(readInt(payload, 8, "customWordMode")),
+			readText(payload, 9, "customWordsRaw")
 		);
 	}
 
@@ -56,6 +62,18 @@ public record Setting(
 		return value.asInt();
 	}
 
+	private static String readText(JsonNode payload, int index, String fieldName) {
+		JsonNode value = payload.get(index);
+		if (value == null || value.isNull()) {
+			return "";
+		}
+		if (!value.isTextual()) {
+			throw new IllegalArgumentException("setting field must be string: " + fieldName);
+		}
+		String raw = value.asText();
+		return raw == null ? "" : raw;
+	}
+
 	public Setting copy() {
 		return new Setting(
 			roundCount,
@@ -65,11 +83,13 @@ public record Setting(
 			hintRevealSec,
 			hintLetterCount,
 			drawerOrderMode,
-			endMode
+			endMode,
+			customWordMode,
+			customWordsRaw
 		);
 	}
 
-	public List<Integer> toPayload() {
+	public List<Object> toPayload() {
 		return List.of(
 			roundCount,
 			drawSec,
@@ -78,7 +98,9 @@ public record Setting(
 			hintRevealSec,
 			hintLetterCount,
 			drawerOrderMode.code(),
-			endMode.code()
+			endMode.code(),
+			customWordMode.code(),
+			customWordsRaw == null ? "" : customWordsRaw
 		);
 	}
 }

@@ -16,7 +16,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 public record RoomSnapshot(
 	String roomCode,
 	String hostSessionId,
-	List<Integer> settings,
+	List<Object> settings,
 	int participantCount,
 	Map<String, ParticipantSnapshot> participants,
 	List<JsonNode> currentCanvas,

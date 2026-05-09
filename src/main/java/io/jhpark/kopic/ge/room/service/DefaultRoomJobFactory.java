@@ -6,12 +6,14 @@ import io.jhpark.kopic.ge.common.metrics.GeMetrics;
 import io.jhpark.kopic.ge.common.util.CommonMapper;
 import io.jhpark.kopic.ge.common.util.TimeFormatUtil;
 import io.jhpark.kopic.ge.outbound.dto.GeEvent;
+import io.jhpark.kopic.ge.room.dto.CustomWordMode;
 import io.jhpark.kopic.ge.room.dto.DrawerOrderMode;
 import io.jhpark.kopic.ge.room.dto.EndMode;
 import io.jhpark.kopic.ge.room.dto.Game;
 import io.jhpark.kopic.ge.room.dto.Participant;
 import io.jhpark.kopic.ge.room.dto.Room;
 import io.jhpark.kopic.ge.room.dto.Setting;
+import io.jhpark.kopic.ge.room.dto.WordEntry;
 import io.jhpark.kopic.ge.room.dto.Game.GamePhase;
 import io.jhpark.kopic.ge.room.dto.Game.RoundPhase;
 import io.jhpark.kopic.ge.room.dto.Game.TurnPhase;
@@ -27,7 +29,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.ThreadLocalRandom;
 import lombok.RequiredArgsConstructor;
@@ -368,7 +369,25 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 					return RoomJob.FollowUpResult.none();
 				}
 
-				Game newGame =room.startGame();
+				List<WordEntry> customWordPool = List.of();
+				if (!isQuickRoom) {
+					customWordPool = wordPoolProvider.parseCustomWordPool(
+						room.getSetting().customWordsRaw()
+					);
+					if (room.getSetting().customWordMode() == CustomWordMode.CUSTOM_ONLY
+						&& customWordPool.isEmpty()) {
+						if (requestedParticipant != null) {
+							sendErrorToParticipant(
+								requestedParticipant,
+								1999,
+								"INVALID_REQUEST",
+								"custom words are required when customWordMode is CUSTOM_ONLY"
+							);
+						}
+						return RoomJob.FollowUpResult.none();
+					}
+				}
+				Game newGame = room.startGame(customWordPool);
 				geMetrics.increment(
 					"kopic_ge_game_start_total",
 					"room_type",
@@ -539,8 +558,22 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 				game.clearDeadlineAt();
 
 				// 단어 후보는 현재 룸 설정값을 기준으로 턴마다 새로 만든다.
-				List<String> words = resolveWordChoices(game, game.getGameSetting().wordChoiceCount());
-				game.openWordCandidate(words);
+				List<WordEntry> wordEntries = resolveWordChoices(game, game.getGameSetting().wordChoiceCount());
+				if (wordEntries.isEmpty()) {
+					log.warn(
+						"word choice skipped because candidates were empty. roomId={}, gameId={}, roundNo={}, turnId={}, customWordMode={}",
+						room.getRoomId(),
+						game.getGameId(),
+						game.getCurRoundIndex(),
+						game.getCurTurnId(),
+						game.getGameSetting().customWordMode()
+					);
+					return RoomJob.FollowUpResult.followUp(turnEnd("NO_WORD_CANDIDATE"), null, null);
+				}
+				game.openWordCandidate(wordEntries);
+				List<String> words = wordEntries.stream()
+					.map(WordEntry::word)
+					.toList();
 				int choiceSec = normalizePositiveSeconds(game.getGameSetting().wordChoiceSec(), 10);
 				game.setDeadlineAt(Instant.now().plusSeconds(choiceSec));
 
@@ -1240,7 +1273,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 			);
 			return RoomJob.FollowUpResult.none();
 		}
-		List<String> wordCandidates = game.getWordCandidates();
+		List<WordEntry> wordCandidates = game.getWordCandidates();
 		if (wordCandidates == null || wordCandidates.isEmpty()) {
 			log.warn(
 				"startDrawingPhase ignored because word candidates are empty. roomId={}, turnId={}",
@@ -1278,7 +1311,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 			"gid", game.getGameId(),
 			"drawSec", drawSec,
 			"drawerSid", game.getCurDrawerSid(),
-			"answer", game.getAnswerWord()
+			"answerEntry", game.getAnswerWordEntry()
 		);
 
 		Map<String, Object> guesserPayload = Map.of(
@@ -1328,69 +1361,71 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 
 	/**
 	 * 요청 개수에 맞는 단어 후보 목록을 만든다.
-	 * 최근 정답 단어를 우선 제외하되, 개수가 부족하면 최근 단어를 오래된 순으로 다시 포함해
-	 * 전체 풀 크기가 허용하는 범위 내에서 요청 개수를 최대한 맞춘다.
+	 * 최근 정답 단어를 우선 제외해 후보를 고르고,
+	 * 부족하면 제외 조건을 완화해 추가 보충한다.
 	 */
-	private List<String> resolveWordChoices(Game game, int requestedCount) {
+	private List<WordEntry> resolveWordChoices(Game game, int requestedCount) {
 		int targetCount = requestedCount <= 0 ? 1 : requestedCount;
-		int totalWordCount = wordPoolProvider.totalWordCount();
-		if (totalWordCount <= 0) {
-			log.warn("word pool is empty. roomGameId={}, requestedCount={}",
-				game == null ? null : game.getGameId(), targetCount);
-			return List.of();
-		}
 
-		int maxPossibleCount = Math.min(targetCount, totalWordCount);
 		Set<String> usedWords = game == null || game.getRecentAnswerWordCounts() == null
 			? Set.of()
 			: new HashSet<>(game.getRecentAnswerWordCounts().keySet());
-		List<String> freshWords = wordPoolProvider.pickRandomWords(maxPossibleCount, usedWords);
+		CustomWordMode customWordMode = game.getGameSetting().customWordMode();
+		List<WordEntry> gameCustomPool = game.getCustomWordPool();
+		List<WordEntry> freshWords = wordPoolProvider.pickRandomWords(
+			targetCount,
+			usedWords,
+			customWordMode,
+			gameCustomPool
+		);
 
-		if (freshWords.size() >= maxPossibleCount) {
+		if (freshWords.size() >= targetCount) {
 			return freshWords;
 		}
 
-		List<String> resolved = new java.util.ArrayList<>(freshWords);
-		Set<String> selectedWords = new HashSet<>(resolved);
-		Queue<String> recentWords = game == null ? null : game.getRecentAnswerWords();
-		if (recentWords != null && !recentWords.isEmpty()) {
-			for (String recentWord : recentWords) {
-				if (recentWord == null || recentWord.isBlank()) {
-					continue;
-				}
-				if (!selectedWords.add(recentWord)) {
-					continue;
-				}
-				resolved.add(recentWord);
-				if (resolved.size() >= maxPossibleCount) {
-					break;
-				}
+		List<WordEntry> resolved = new ArrayList<>(freshWords);
+		Set<String> selectedWords = new HashSet<>();
+		for (WordEntry wordEntry : resolved) {
+			if (wordEntry == null || wordEntry.word() == null) {
+				continue;
 			}
+			selectedWords.add(wordEntry.word());
 		}
-		if (resolved.size() < maxPossibleCount) {
-			List<String> refillWords =
-				wordPoolProvider.pickRandomWords(maxPossibleCount - resolved.size(), selectedWords);
-			resolved.addAll(refillWords);
+		List<WordEntry> refillWords = wordPoolProvider.pickRandomWords(
+			targetCount - resolved.size(),
+			selectedWords,
+			customWordMode,
+			gameCustomPool
+		);
+		resolved.addAll(refillWords);
+		if (resolved.size() < targetCount) {
+			List<WordEntry> duplicateFallbackWords = wordPoolProvider.pickRandomWordsAllowDuplicate(
+				targetCount - resolved.size(),
+				customWordMode,
+				gameCustomPool
+			);
+			resolved.addAll(duplicateFallbackWords);
 		}
 
 		if (resolved.size() < targetCount) {
 			log.warn(
-				"word choices truncated due to total pool size. roomGameId={}, requestedCount={}, totalWordCount={}, resolvedCount={}",
+				"word choices truncated due to effective pool size. roomGameId={}, requestedCount={}, resolvedCount={}, customWordMode={}",
 				game == null ? null : game.getGameId(),
 				targetCount,
-				totalWordCount,
-				resolved.size()
+				resolved.size(),
+				customWordMode.code()
 			);
 		} else {
 			log.info(
-				"word choices replenished from recent words. roomGameId={}, requestedCount={}, freshCount={}, usedWordCount={}",
+				"word choices resolved with exclusions and refill. roomGameId={}, requestedCount={}, freshCount={}, usedWordCount={}, customWordMode={}",
 				game == null ? null : game.getGameId(),
 				targetCount,
 				freshWords.size(),
-				usedWords.size()
+				usedWords.size(),
+				customWordMode.code()
 			);
 		}
-		return List.copyOf(resolved.subList(0, Math.min(maxPossibleCount, resolved.size())));
+		return List.copyOf(resolved.subList(0, Math.min(targetCount, resolved.size())));
 	}
 
 	/**
@@ -1860,6 +1895,15 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 				if (requestedParticipant == null) {
 					return RoomJob.FollowUpResult.none();
 				}
+				if (room.getRoomType() == Room.QUICK_ROOM_TYPE) {
+					sendErrorToParticipant(
+						requestedParticipant,
+						1999,
+						"INVALID_REQUEST",
+						"update setting is not allowed in quick room"
+					);
+					return RoomJob.FollowUpResult.none();
+				}
 
 				if (rejectIfNotHost(room, requestedParticipant, "only host can update game setting")) {
 					return RoomJob.FollowUpResult.none();
@@ -1868,7 +1912,6 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 				if (rejectIfGameAlreadyExists(room, requestedParticipant, "INVALID_REQUEST", "game already started")) {
 					return RoomJob.FollowUpResult.none();
 				}
-					
 
 				try {
 					Setting parsedSetting = Setting.fromPayload(settingPayload);
@@ -1884,7 +1927,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 				}
 
 				for (Participant participant : room.getParticipants().values()) {
-					if(!participant.sessionId().equals(requestedSessionId)) {
+					if (!participant.sessionId().equals(requestedSessionId)) {
 						sendToParticipant(participant, 107, settingPayload);
 					}
 				}

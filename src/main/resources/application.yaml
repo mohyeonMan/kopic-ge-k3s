@@ -7,9 +7,9 @@ spring:
 kopic:
   game-timer:
     close-if-empty: 30s
-    start-round: 5s
-    next-turn: 5s
-    open-word-choice: 5s
+    start-round: 3s
+    next-turn: 3s
+    open-word-choice: 3s
     turn-result: 7s
     game-result: 10s
     quick-restart: 5s

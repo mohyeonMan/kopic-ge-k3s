@@ -41,10 +41,11 @@ public class Game {
     private String curTurnId;
     private int curTurnIndex;
     private TurnPhase turnPhase;
-    private List<String> wordCandidates;
+    private List<WordEntry> wordCandidates;
+    private List<WordEntry> customWordPool;
     private Queue<String> recentAnswerWords;
     private Map<String, Integer> recentAnswerWordCounts;
-    private String answerWord;
+    private WordEntry answerWordEntry;
     private String hintPattern;
     private Queue<Integer> pendingHintIndexes;
     private int hintTotalRevealCount;
@@ -52,9 +53,10 @@ public class Game {
     private String curDrawerSid;
     private Map<String, Integer> earnedPoints;
 
-    private Game(Setting gameSetting){
+    private Game(Setting gameSetting, List<WordEntry> customWordPool){
         this.gameId = newId(GAME_ID_PREFIX);
         this.gameSetting = gameSetting.copy();
+        this.customWordPool = customWordPool == null ? List.of() : List.copyOf(customWordPool);
         this.gamePhase = GamePhase.PLAYING;
         this.totalPoints = new LinkedHashMap<>();
         this.recentAnswerWords = new ArrayDeque<>();
@@ -64,10 +66,10 @@ public class Game {
         this.roundPhase = RoundPhase.READY;
     }
     
-    public static Game start(Setting gameSetting) {
+    public static Game start(Setting gameSetting, List<WordEntry> customWordPool) {
         Objects.requireNonNull(gameSetting,   "gameSetting");
 
-        return new Game(gameSetting);
+        return new Game(gameSetting, customWordPool);
 
     }
 
@@ -107,7 +109,7 @@ public class Game {
         this.turnPhase = TurnPhase.STARTING;
         this.curDrawerSid = nextDrawerSid;
         this.wordCandidates = List.of();
-        this.answerWord = null;
+        this.answerWordEntry = null;
         this.hintPattern = null;
         this.pendingHintIndexes.clear();
         this.hintTotalRevealCount = 0;
@@ -125,27 +127,37 @@ public class Game {
         this.curRoundDrawerSids.remove(this.curDrawerSid);
     }
 
-    public void openWordCandidate(List<String> words) {
+    public void openWordCandidate(List<WordEntry> words) {
         Objects.requireNonNull(words, "words");
 
         this.wordCandidates = List.copyOf(words);
-        this.answerWord = null;
+        this.answerWordEntry = null;
         this.turnPhase = TurnPhase.WORD_CHOICE;
     }
 
     public void startDrawing(int choiceIndex) {
-        this.answerWord = this.wordCandidates.get(choiceIndex);
-        trackRecentAnswerWord(this.answerWord);
-        initializeHintState(this.answerWord);
+        WordEntry selectedEntry = this.wordCandidates.get(choiceIndex);
+        this.answerWordEntry = selectedEntry;
+        trackRecentAnswerWord(selectedEntry.word());
+        initializeHintState(selectedEntry.word());
         this.turnPhase = TurnPhase.DRAWING;
     }
 
+    public String getAnswerWord() {
+        return this.answerWordEntry == null ? null : this.answerWordEntry.word();
+    }
+
+    public String getAnswerDescription() {
+        return this.answerWordEntry == null ? null : this.answerWordEntry.description();
+    }
+
     public int revealHintLetters(int requestedCount) {
+        String answerWord = getAnswerWord();
         if (requestedCount <= 0
             || this.pendingHintIndexes == null
             || this.pendingHintIndexes.isEmpty()
             || this.hintPattern == null
-            || this.answerWord == null) {
+            || answerWord == null) {
             return 0;
         }
 
@@ -156,10 +168,10 @@ public class Game {
             if (revealIndex == null
                 || revealIndex < 0
                 || revealIndex >= hintChars.length
-                || revealIndex >= this.answerWord.length()) {
+                || revealIndex >= answerWord.length()) {
                 continue;
             }
-            char answerChar = this.answerWord.charAt(revealIndex);
+            char answerChar = answerWord.charAt(revealIndex);
             if (hintChars[revealIndex] == answerChar) {
                 continue;
             }
