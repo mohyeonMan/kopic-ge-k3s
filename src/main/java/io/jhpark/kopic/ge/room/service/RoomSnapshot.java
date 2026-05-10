@@ -15,6 +15,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 
 public record RoomSnapshot(
 	String roomCode,
+	int roomType,
 	String hostSessionId,
 	List<Object> settings,
 	int participantCount,
@@ -37,6 +38,7 @@ public record RoomSnapshot(
 		}
 		return new RoomSnapshot(
 			room.getRoomCode(),
+			room.getRoomType(),
 			room.getHostSessionId(),
 			room.getSetting().toPayload(),
 			copiedParticipants.size(),
