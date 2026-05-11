@@ -229,7 +229,7 @@ public class Game {
             char character = answer.charAt(index);
             if (isHintRevealableChar(character)) {
                 revealableIndexes.add(index);
-                patternBuilder.append('_');
+                patternBuilder.append('○');
             } else {
                 patternBuilder.append(character);
             }
