@@ -748,7 +748,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 					"reason",
 					resolvedEndReason
 				);
-				applyDrawerBonus(game);
+				// applyDrawerBonus(game);
 				applyEarnedPointsToTotalPoints(game);
 				game.consumeCurrentTurnDrawer();
 				game.finishTurnResult();
@@ -1148,6 +1148,12 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 
 				// 정답 메시지는 채팅으로 방송하지 않고 이번 턴 결과용 점수 예약과 종료 판정만 처리한다.
 				int guessScore = calculateGuessScore(game);
+
+				if(!game.getEarnedPoints().containsKey(game.getCurDrawerSid())){
+					int drawerPoint = (guessScore + 1) / 2;
+					game.getEarnedPoints().putIfAbsent(game.getCurDrawerSid(), drawerPoint);
+				}
+
 				Integer existingPoint = game.getEarnedPoints().putIfAbsent(sessionId, guessScore);
 				if (existingPoint != null) {
 					return RoomJob.FollowUpResult.none();
@@ -1656,25 +1662,25 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 		return Math.max(1, Math.min(20, scaledScore));
 	}
 
-	/**
-	 * 이번 턴에 정답자가 한 명 이상 있었으면 drawer 보너스를 부여한다.
-	 * drawer 보너스는 고정 10점이다.
-	 * 이 점수 역시 턴 결과 공개 전까지 earnedPoints에만 보관한다.
-	 */
-	private void applyDrawerBonus(Game game) {
-		if (game == null
-			|| isBlank(game.getCurDrawerSid())
-			|| game.getEarnedPoints() == null
-			|| game.getEarnedPoints().isEmpty()) {
-			return;
-		}
+	// /**
+	//  * 이번 턴에 정답자가 한 명 이상 있었으면 drawer 보너스를 부여한다.
+	//  * drawer 보너스는 고정 10점이다.
+	//  * 이 점수 역시 턴 결과 공개 전까지 earnedPoints에만 보관한다.
+	//  */
+	// private void applyDrawerBonus(Game game) {
+	// 	if (game == null
+	// 		|| isBlank(game.getCurDrawerSid())
+	// 		|| game.getEarnedPoints() == null
+	// 		|| game.getEarnedPoints().isEmpty()) {
+	// 		return;
+	// 	}
 
-		int drawerBonusScore = 10;
-		Integer existingScore = game.getEarnedPoints().putIfAbsent(game.getCurDrawerSid(), drawerBonusScore);
-		if (existingScore != null) {
-			return;
-		}
-	}
+	// 	int drawerBonusScore = 10;
+	// 	Integer existingScore = game.getEarnedPoints().putIfAbsent(game.getCurDrawerSid(), drawerBonusScore);
+	// 	if (existingScore != null) {
+	// 		return;
+	// 	}
+	// }
 
 	/**
 	 * earnedPoints에 쌓아둔 이번 턴 점수를 totalPoints에 반영한다.
