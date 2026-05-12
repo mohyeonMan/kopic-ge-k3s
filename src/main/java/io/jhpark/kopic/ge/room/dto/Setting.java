@@ -24,7 +24,7 @@ public record Setting(
 			40,
 			10,
 			3,
-			10,
+			30,
 			1,
 			DrawerOrderMode.JOIN_ORDER,
 			EndMode.TIME_OR_ALL_CORRECT,
