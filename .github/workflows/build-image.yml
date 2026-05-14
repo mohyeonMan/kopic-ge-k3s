@@ -2,7 +2,7 @@ name: build-and-push
 
 on:
   push:
-    branches: ["dev"]
+    branches: ["dev", "prod"]
 
 permissions:
   contents: read
@@ -47,6 +47,22 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
+      - name: Resolve deploy environment
+        id: deploy
+        run: |
+          case "${GITHUB_REF_NAME}" in
+            dev)
+              echo "environment=dev" >> "${GITHUB_OUTPUT}"
+              ;;
+            prod)
+              echo "environment=prod" >> "${GITHUB_OUTPUT}"
+              ;;
+            *)
+              echo "unsupported branch: ${GITHUB_REF_NAME}" >&2
+              exit 1
+              ;;
+          esac
+
       - name: Checkout infra repo
         uses: actions/checkout@v4
         with:
@@ -58,7 +74,8 @@ jobs:
       - name: Update kustomization tag
         run: |
           cd infra
-          TARGET_FILE="apps/kopic/ge/kustomization.yaml"
+          DEPLOY_ENV="${{ steps.deploy.outputs.environment }}"
+          TARGET_FILE="apps/kopic/${DEPLOY_ENV}/ge/kustomization.yaml"
 
           if [ ! -f "${TARGET_FILE}" ]; then
             echo "skip infra tag update because ${TARGET_FILE} does not exist yet"
@@ -71,7 +88,8 @@ jobs:
       - name: Commit and push
         run: |
           cd infra
-          TARGET_FILE="apps/kopic/ge/kustomization.yaml"
+          DEPLOY_ENV="${{ steps.deploy.outputs.environment }}"
+          TARGET_FILE="apps/kopic/${DEPLOY_ENV}/ge/kustomization.yaml"
 
           if [ ! -f "${TARGET_FILE}" ]; then
             echo "skip infra push because ${TARGET_FILE} does not exist yet"
@@ -85,5 +103,5 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
           git add "${TARGET_FILE}"
-          git commit -m "deployment: ${REPO_NAME} image tag [sha-${SHORT_SHA}]" || exit 0
+          git commit -m "deployment(${DEPLOY_ENV}): ${REPO_NAME} image tag [sha-${SHORT_SHA}]" || exit 0
           git push
