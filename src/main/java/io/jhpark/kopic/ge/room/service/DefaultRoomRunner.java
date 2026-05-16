@@ -39,14 +39,14 @@ public final class DefaultRoomRunner implements RoomRunner {
 			log.warn("roomId is blank. reject room job.");
 			return recordSubmitResult(RoomSubmitResult.rejected(
 				ErrorCode.INVALID_REQUEST,
-				"roomId is required"
+				"방 정보가 없습니다."
 			));
 		}
 		if (job == null) {
 			log.warn("job is null. reject room job. roomId={}", roomId);
 			return recordSubmitResult(RoomSubmitResult.rejected(
 				ErrorCode.INVALID_REQUEST,
-				"job is required"
+				"요청을 처리할 수 없습니다."
 			));
 		}
 
@@ -55,7 +55,7 @@ public final class DefaultRoomRunner implements RoomRunner {
 			log.warn("room job rejected because room not found. roomId={}", roomId);
 			return recordSubmitResult(RoomSubmitResult.rejected(
 				ErrorCode.ROOM_NOT_FOUND,
-				"room not found: " + roomId
+				"방을 찾을 수 없습니다."
 			));
 		}
 
@@ -66,7 +66,7 @@ public final class DefaultRoomRunner implements RoomRunner {
 			log.warn("room job rejected because enqueue failed. roomId={}, errorCode={}", roomId, errorCode);
 			return recordSubmitResult(RoomSubmitResult.rejected(
 				errorCode,
-				"room mailbox is full or inactive. roomId=" + roomId
+				"요청이 많아 잠시 후 다시 시도해주세요."
 			));
 		}
 		schedule(session);

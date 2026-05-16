@@ -93,7 +93,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 					Map<String, Participant> participants = room.getParticipants();
 					// 정원 초과인 경우 참가자 추가 없이 에러 이벤트만 응답한다.
 					if (participants.size() >= room.getCapacity()) {
-						sendErrorToSession(wsNodeId, sessionId, ErrorCode.ROOM_FULL, "room is full");
+						sendErrorToSession(wsNodeId, sessionId, ErrorCode.ROOM_FULL, "방이 가득 찼습니다.");
 						return RoomJob.FollowUpResult.none();
 					}
 
@@ -347,29 +347,29 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 				}
 
 				// 방장만 게임시작 가능.
-				if (!isQuickRoom && rejectIfNotHost(room, requestedParticipant, "only host can start game")) {
+				if (!isQuickRoom && rejectIfNotHost(room, requestedParticipant, "방장만 게임을 시작할 수 있습니다.")) {
 					return RoomJob.FollowUpResult.none();
 				}
 
 				// 2명이상일때 시작가능.
-				if (room.getParticipants().size() < 2) {
-					if (isQuickRoom && requestedParticipant == null && hadAutoRestartDeadline) {
-						room.clearAutoRestartAt();
+					if (room.getParticipants().size() < 2) {
+						if (isQuickRoom && requestedParticipant == null && hadAutoRestartDeadline) {
+							room.clearAutoRestartAt();
+						}
+						if (requestedParticipant != null) {
+							sendErrorToParticipant(
+								requestedParticipant,
+								ErrorCode.INVALID_REQUEST,
+								"게임을 시작하려면 최소 2명이 필요합니다."
+							);
+						}
+						return RoomJob.FollowUpResult.none();
 					}
-					if (requestedParticipant != null) {
-						sendErrorToParticipant(
-							requestedParticipant,
-							ErrorCode.INVALID_REQUEST,
-							"at least 2 participants required to start game"
-						);
-					}
-					return RoomJob.FollowUpResult.none();
-				}
 				if (rejectIfGameAlreadyExists(
 					room,
 					requestedParticipant,
 					ErrorCode.CONFLICT,
-					"game is already active"
+					"이미 게임이 진행 중입니다."
 				)) {
 					return RoomJob.FollowUpResult.none();
 				}
@@ -379,17 +379,17 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 					customWordPool = wordPoolProvider.parseCustomWordPool(
 						room.getSetting().customWordsRaw()
 					);
-					if (room.getSetting().customWordMode() == CustomWordMode.CUSTOM_ONLY
-						&& customWordPool.isEmpty()) {
-						if (requestedParticipant != null) {
-							sendErrorToParticipant(
-								requestedParticipant,
-								ErrorCode.INVALID_REQUEST,
-								"custom words are required when customWordMode is CUSTOM_ONLY"
-							);
+						if (room.getSetting().customWordMode() == CustomWordMode.CUSTOM_ONLY
+							&& customWordPool.isEmpty()) {
+							if (requestedParticipant != null) {
+								sendErrorToParticipant(
+									requestedParticipant,
+									ErrorCode.INVALID_REQUEST,
+									"사용자 지정 단어만 사용하는 설정에서는 단어를 1개 이상 입력해야 합니다."
+								);
+							}
+							return RoomJob.FollowUpResult.none();
 						}
-						return RoomJob.FollowUpResult.none();
-					}
 				}
 
 				Game newGame = room.startGame(customWordPool);
@@ -639,7 +639,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 					return RoomJob.FollowUpResult.none();
 				}
 				Game game = room.getGame();
-				if (rejectIfNotCurrentDrawer(game, chooser, "only current drawer can choose word")) {
+				if (rejectIfNotCurrentDrawer(game, chooser, "현재 그리는 사람만 단어를 선택할 수 있습니다.")) {
 					return RoomJob.FollowUpResult.none();
 				}
 
@@ -1911,12 +1911,12 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 					sendErrorToParticipant(
 						requestedParticipant,
 						ErrorCode.INVALID_REQUEST,
-						"update setting is not allowed in quick room"
+						"빠른 입장 방에서는 게임 설정을 변경할 수 없습니다."
 					);
 					return RoomJob.FollowUpResult.none();
 				}
 
-				if (rejectIfNotHost(room, requestedParticipant, "only host can update game setting")) {
+				if (rejectIfNotHost(room, requestedParticipant, "방장만 게임 설정을 변경할 수 있습니다.")) {
 					return RoomJob.FollowUpResult.none();
 				}
 
@@ -1924,7 +1924,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 					room,
 					requestedParticipant,
 					ErrorCode.INVALID_REQUEST,
-					"game already started"
+					"게임이 이미 시작되어 설정을 변경할 수 없습니다."
 				)) {
 					return RoomJob.FollowUpResult.none();
 				}
@@ -1940,7 +1940,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 					sendErrorToParticipant(
 						requestedParticipant,
 						ErrorCode.INVALID_REQUEST,
-						"invalid game setting"
+						"게임 설정 값이 올바르지 않습니다."
 					);
 					return RoomJob.FollowUpResult.none();
 				}

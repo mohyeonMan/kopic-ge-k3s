@@ -64,7 +64,7 @@ public class DefaultRoomService implements RoomService {
 		if (isBlank(roomCode)) {
 			return RoomSubmitResult.rejected(
 				ErrorCode.INVALID_REQUEST,
-				"roomCode is required"
+				"방 코드를 입력해주세요."
 			);
 		}
 		Optional<String> roomIdByCode = sessionStore.findRoomIdByPrivateCode(roomCode);
@@ -72,7 +72,7 @@ public class DefaultRoomService implements RoomService {
 			log.warn("private join rejected because roomCode was not found. roomCode={}, sessionId={}", roomCode, sessionId);
 			return RoomSubmitResult.rejected(
 				ErrorCode.ROOM_NOT_FOUND,
-				"room not found by roomCode: " + roomCode
+				"방을 찾을 수 없습니다. 방 코드를 확인해주세요: " + roomCode
 			);
 		}
 		String roomId = roomIdByCode.get();

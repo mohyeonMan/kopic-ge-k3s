@@ -39,7 +39,7 @@ public class DefaultEventHandler {
 				event.senderSessionId(),
 				event.wsNodeId(),
 				ErrorCode.MISSING_ENVELOPE,
-				"missing event envelope"
+				"요청 이벤트 정보가 누락되었습니다."
 			);
 			return;
 		}
@@ -59,7 +59,7 @@ public class DefaultEventHandler {
 					event.senderSessionId(),
 					event.wsNodeId(),
 					ErrorCode.UNSUPPORTED_EVENT,
-					"unsupported event code: " + event.envelope().e()
+					"지원하지 않는 요청입니다. 이벤트 코드: " + event.envelope().e()
 				);
 			}
 		}
@@ -166,7 +166,7 @@ public class DefaultEventHandler {
 				event.senderSessionId(),
 				event.wsNodeId(),
 				ErrorCode.INVALID_REQUEST,
-				"choiceIndex must be int"
+				"선택한 단어 정보가 올바르지 않습니다."
 			);
 			return;
 		}
@@ -176,7 +176,7 @@ public class DefaultEventHandler {
 				event.senderSessionId(),
 				event.wsNodeId(),
 				ErrorCode.INVALID_REQUEST,
-				"choiceIndex must be zero or positive"
+				"선택한 단어 번호가 올바르지 않습니다."
 			);
 			return;
 		}
@@ -283,11 +283,26 @@ public class DefaultEventHandler {
 				event.senderSessionId(),
 				event.wsNodeId(),
 				ErrorCode.INVALID_REQUEST,
-				"required field is missing: " + String.join(", ", requiredFields)
+				requiredFieldMessage(requiredFields)
 			);
 			return false;
 		}
 	}
+
+	private String requiredFieldMessage(String... requiredFields) {
+		if (requiredFields == null || requiredFields.length == 0) {
+			return "필수 입력값이 누락되었습니다.";
+		}
+		StringBuilder message = new StringBuilder("필수 입력값이 누락되었습니다: ");
+		for (int index = 0; index < requiredFields.length; index++) {
+			if (index > 0) {
+				message.append(", ");
+			}
+			message.append(requiredFields[index]);
+		}
+		return message.toString();
+	}
+
 
 	private void handleGameStart(WsEvent event) {
 		// JsonNode payload = event.envelope().p();
