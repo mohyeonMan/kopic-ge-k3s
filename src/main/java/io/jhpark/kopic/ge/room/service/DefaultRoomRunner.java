@@ -1,5 +1,6 @@
 package io.jhpark.kopic.ge.room.service;
 
+import io.jhpark.kopic.ge.common.error.ErrorCode;
 import io.jhpark.kopic.ge.common.metrics.GeMetrics;
 import io.jhpark.kopic.ge.room.dto.RoomSession;
 import io.jhpark.kopic.ge.room.registry.RoomSessionStore;
@@ -37,14 +38,14 @@ public final class DefaultRoomRunner implements RoomRunner {
 		if (isBlank(roomId)) {
 			log.warn("roomId is blank. reject room job.");
 			return recordSubmitResult(RoomSubmitResult.rejected(
-				RoomSubmitResult.Reason.INVALID_REQUEST,
+				ErrorCode.INVALID_REQUEST,
 				"roomId is required"
 			));
 		}
 		if (job == null) {
 			log.warn("job is null. reject room job. roomId={}", roomId);
 			return recordSubmitResult(RoomSubmitResult.rejected(
-				RoomSubmitResult.Reason.INVALID_REQUEST,
+				ErrorCode.INVALID_REQUEST,
 				"job is required"
 			));
 		}
@@ -53,18 +54,18 @@ public final class DefaultRoomRunner implements RoomRunner {
 		if (session == null) {
 			log.warn("room job rejected because room not found. roomId={}", roomId);
 			return recordSubmitResult(RoomSubmitResult.rejected(
-				RoomSubmitResult.Reason.ROOM_NOT_FOUND,
+				ErrorCode.ROOM_NOT_FOUND,
 				"room not found: " + roomId
 			));
 		}
 
 		if (!session.enqueue(job)) {
-			RoomSubmitResult.Reason reason = session.isActive()
-				? RoomSubmitResult.Reason.MAILBOX_FULL
-				: RoomSubmitResult.Reason.ACTOR_INACTIVE;
-			log.warn("room job rejected because enqueue failed. roomId={}, reason={}", roomId, reason);
+			ErrorCode errorCode = session.isActive()
+				? ErrorCode.MAILBOX_FULL
+				: ErrorCode.ACTOR_INACTIVE;
+			log.warn("room job rejected because enqueue failed. roomId={}, errorCode={}", roomId, errorCode);
 			return recordSubmitResult(RoomSubmitResult.rejected(
-				reason,
+				errorCode,
 				"room mailbox is full or inactive. roomId=" + roomId
 			));
 		}
@@ -173,7 +174,7 @@ public final class DefaultRoomRunner implements RoomRunner {
 		if (submit(roomId, nextJob) instanceof RoomSubmitResult.Rejected rejected) {
 			log.warn("follow-up room job rejected. roomId={}, reason={}, message={}",
 				roomId,
-				rejected.reason(),
+				rejected.errorCode() != null ? rejected.errorCode().reason() : null,
 				rejected.message());
 		}
 	}
@@ -208,7 +209,7 @@ public final class DefaultRoomRunner implements RoomRunner {
 			resultLabel = "accepted";
 			reasonLabel = "none";
 		} else if (result instanceof RoomSubmitResult.Rejected rejected) {
-			reasonLabel = rejected.reason() != null ? rejected.reason().name() : "unknown";
+			reasonLabel = rejected.errorCode() != null ? rejected.errorCode().reason() : "unknown";
 		}
 		geMetrics.increment(
 			"kopic_ge_room_submit_total",

@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import io.jhpark.kopic.ge.common.dto.KopicEnvelope;
+import io.jhpark.kopic.ge.common.error.ErrorCode;
 import io.jhpark.kopic.ge.common.metrics.GeMetrics;
 import io.jhpark.kopic.ge.common.util.EventMapper;
 import io.jhpark.kopic.ge.common.util.TimeFormatUtil;
@@ -37,8 +38,7 @@ public class DefaultEventHandler {
 			sendRejected(
 				event.senderSessionId(),
 				event.wsNodeId(),
-				1999,
-				"INVALID_REQUEST",
+				ErrorCode.MISSING_ENVELOPE,
 				"missing event envelope"
 			);
 			return;
@@ -58,8 +58,7 @@ public class DefaultEventHandler {
 				sendRejected(
 					event.senderSessionId(),
 					event.wsNodeId(),
-					1999,
-					"UNSUPPORTED_EVENT",
+					ErrorCode.UNSUPPORTED_EVENT,
 					"unsupported event code: " + event.envelope().e()
 				);
 			}
@@ -166,8 +165,7 @@ public class DefaultEventHandler {
 			sendRejected(
 				event.senderSessionId(),
 				event.wsNodeId(),
-				1999,
-				"INVALID_REQUEST",
+				ErrorCode.INVALID_REQUEST,
 				"choiceIndex must be int"
 			);
 			return;
@@ -177,8 +175,7 @@ public class DefaultEventHandler {
 			sendRejected(
 				event.senderSessionId(),
 				event.wsNodeId(),
-				1999,
-				"INVALID_REQUEST",
+				ErrorCode.INVALID_REQUEST,
 				"choiceIndex must be zero or positive"
 			);
 			return;
@@ -200,8 +197,7 @@ public class DefaultEventHandler {
 		sendRejected(
 			event.senderSessionId(),
 			event.wsNodeId(),
-			1999,
-			rejected.reason().name(),
+			rejected.errorCode(),
 			rejected.message()
 		);
 	}
@@ -209,17 +205,17 @@ public class DefaultEventHandler {
 	private void sendRejected(
 		String sessionId,
 		String wsNodeId,
-		int errorEventCode,
-		String reason,
+		ErrorCode errorCode,
 		String message
 	) {
+		ErrorCode resolvedErrorCode = errorCode != null ? errorCode : ErrorCode.UNKNOWN;
 		geMetrics.increment(
 			"kopic_ge_inbound_rejected_total",
 			"reason",
-			reason
+			resolvedErrorCode.reason()
 		);
 		if (isBlank(sessionId)) {
-			log.warn("event rejected without session target. reason={}, message={}", reason, message);
+			log.warn("event rejected without session target. reason={}, message={}", resolvedErrorCode.reason(), message);
 			return;
 		}
 		geEventPublisher.publish(
@@ -227,8 +223,8 @@ public class DefaultEventHandler {
 			new GeEvent(
 				sessionId,
 				new KopicEnvelope(
-					errorEventCode,
-					rejectedPayload(reason, message)
+					resolvedErrorCode.eventCode(),
+					rejectedPayload(resolvedErrorCode.reason(), message)
 				),
 				TimeFormatUtil.now()
 			)
@@ -279,12 +275,15 @@ public class DefaultEventHandler {
 			eventMapper.require(payload, requiredFields);
 			return true;
 		} catch (IllegalArgumentException illegalArgumentException) {
+			log.warn("invalid inbound payload. eventCode={}, requiredFields={}",
+				event.envelope() != null ? event.envelope().e() : null,
+				String.join(", ", requiredFields),
+				illegalArgumentException);
 			sendRejected(
 				event.senderSessionId(),
 				event.wsNodeId(),
-				1999,
-				"INVALID_REQUEST",
-				illegalArgumentException.getMessage()
+				ErrorCode.INVALID_REQUEST,
+				"required field is missing: " + String.join(", ", requiredFields)
 			);
 			return false;
 		}

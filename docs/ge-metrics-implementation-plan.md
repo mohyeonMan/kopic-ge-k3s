@@ -55,7 +55,7 @@
 - `kopic_ge_outbound_publish_failures_total{reason}`
   - `reason`: `invalid_target`,`serialize_failed`,`publish_exception`,`unknown`
 - `kopic_ge_outbound_events_total{event_code}`
-  - `event_code`: `107`,`200`,`201`,`202`,`203`,`204`,`205`,`206`,`207`,`208`,`209`,`210`,`211`,`301`,`302`,`408`,`1999`,`other`
+  - `event_code`: `107`,`200`,`201`,`202`,`203`,`204`,`205`,`206`,`207`,`208`,`209`,`210`,`211`,`301`,`302`,`408`,`1901`,`1902`,`1903`,`1910`,`1911`,`1920`,`1930`,`1940`,`1941`,`1999`,`other`
 - `kopic_ge_rooms_active{room_type}`
   - `room_type`: `quick`,`private`
 - `kopic_ge_participants_total{room_type}`

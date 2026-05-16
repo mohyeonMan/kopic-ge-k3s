@@ -1,5 +1,6 @@
 package io.jhpark.kopic.ge.room.service;
 
+import io.jhpark.kopic.ge.common.error.ErrorCode;
 import io.jhpark.kopic.ge.room.dto.Room;
 import io.jhpark.kopic.ge.room.dto.RoomSession;
 import io.jhpark.kopic.ge.room.registry.RoomSessionStore;
@@ -62,7 +63,7 @@ public class DefaultRoomService implements RoomService {
 	public RoomSubmitResult privateJoin(String roomCode, String sessionId, String nickname, String wsNodeId) {
 		if (isBlank(roomCode)) {
 			return RoomSubmitResult.rejected(
-				RoomSubmitResult.Reason.INVALID_REQUEST,
+				ErrorCode.INVALID_REQUEST,
 				"roomCode is required"
 			);
 		}
@@ -70,7 +71,7 @@ public class DefaultRoomService implements RoomService {
 		if (roomIdByCode.isEmpty()) {
 			log.warn("private join rejected because roomCode was not found. roomCode={}, sessionId={}", roomCode, sessionId);
 			return RoomSubmitResult.rejected(
-				RoomSubmitResult.Reason.ROOM_NOT_FOUND,
+				ErrorCode.ROOM_NOT_FOUND,
 				"room not found by roomCode: " + roomCode
 			);
 		}

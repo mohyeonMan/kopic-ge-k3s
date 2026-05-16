@@ -2,6 +2,7 @@ package io.jhpark.kopic.ge.room.service;
 
 import io.jhpark.kopic.ge.common.config.GameTimerProperties;
 import io.jhpark.kopic.ge.common.dto.KopicEnvelope;
+import io.jhpark.kopic.ge.common.error.ErrorCode;
 import io.jhpark.kopic.ge.common.metrics.GeMetrics;
 import io.jhpark.kopic.ge.common.util.CommonMapper;
 import io.jhpark.kopic.ge.common.util.TimeFormatUtil;
@@ -92,7 +93,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 					Map<String, Participant> participants = room.getParticipants();
 					// 정원 초과인 경우 참가자 추가 없이 에러 이벤트만 응답한다.
 					if (participants.size() >= room.getCapacity()) {
-						sendErrorToSession(wsNodeId, sessionId, 1999, "ROOM_FULL", "room is full");
+						sendErrorToSession(wsNodeId, sessionId, ErrorCode.ROOM_FULL, "room is full");
 						return RoomJob.FollowUpResult.none();
 					}
 
@@ -358,14 +359,18 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 					if (requestedParticipant != null) {
 						sendErrorToParticipant(
 							requestedParticipant,
-							1999,
-							"INVALID_REQUEST",
+							ErrorCode.INVALID_REQUEST,
 							"at least 2 participants required to start game"
 						);
 					}
 					return RoomJob.FollowUpResult.none();
 				}
-				if (rejectIfGameAlreadyExists(room, requestedParticipant, "CONFLICT", "game is already active")) {
+				if (rejectIfGameAlreadyExists(
+					room,
+					requestedParticipant,
+					ErrorCode.CONFLICT,
+					"game is already active"
+				)) {
 					return RoomJob.FollowUpResult.none();
 				}
 
@@ -379,14 +384,14 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 						if (requestedParticipant != null) {
 							sendErrorToParticipant(
 								requestedParticipant,
-								1999,
-								"INVALID_REQUEST",
+								ErrorCode.INVALID_REQUEST,
 								"custom words are required when customWordMode is CUSTOM_ONLY"
 							);
 						}
 						return RoomJob.FollowUpResult.none();
 					}
 				}
+
 				Game newGame = room.startGame(customWordPool);
 				geMetrics.increment(
 					"kopic_ge_game_start_total",
@@ -1579,8 +1584,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 		}
 		sendErrorToParticipant(
 			participant,
-			1999,
-			"FORBIDDEN",
+			ErrorCode.FORBIDDEN,
 			message
 		);
 		return true;
@@ -1600,22 +1604,20 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 		}
 		sendErrorToParticipant(
 			participant,
-			1999,
-			"FORBIDDEN",
+			ErrorCode.FORBIDDEN,
 			message
 		);
 		return true;
 	}
 
-	private boolean rejectIfGameAlreadyExists(Room room, Participant participant, String reason, String message) {
+	private boolean rejectIfGameAlreadyExists(Room room, Participant participant, ErrorCode errorCode, String message) {
 		if (room == null || room.getGame() == null) {
 			return false;
 		}
 		if (participant != null) {
 			sendErrorToParticipant(
 				participant,
-				1999,
-				reason,
+				errorCode,
 				message
 			);
 		}
@@ -1849,39 +1851,38 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 
 	/**
 	 * 단일 참가자에게 에러 이벤트를 전송한다.
-	 * reason/message를 표준 에러 payload로 구성해 지정된 errorEventCode로 발행한다.
+	 * reason/message를 표준 에러 payload로 구성해 지정된 ErrorCode로 발행한다.
 	 */
-	private void sendErrorToParticipant(Participant participant, int errorEventCode, String reason, String message) {
+	private void sendErrorToParticipant(Participant participant, ErrorCode errorCode, String message) {
 		// reason/message 구조의 에러 이벤트를 단일 참가자에게 발행한다.
+		ErrorCode resolvedErrorCode = errorCode != null ? errorCode : ErrorCode.UNKNOWN;
 		geMetrics.increment(
 			"kopic_ge_inbound_rejected_total",
 			"reason",
-			reason
+			resolvedErrorCode.reason()
 		);
 		geEventPublisher.publish(
-				participant.wsNodeId(),
-				new GeEvent(
-						participant.sessionId(),
-						new KopicEnvelope(
-							errorEventCode,
-							commonMapper.rawMapper().valueToTree(
-								Map.of(
-									"reason", reason,
-									"message", message
-								)
-							)
-						),
-						TimeFormatUtil.now()
-				)
+			participant.wsNodeId(),
+			new GeEvent(
+				participant.sessionId(),
+				new KopicEnvelope(
+					resolvedErrorCode.eventCode(),
+					commonMapper.rawMapper().valueToTree(
+						Map.of(
+							"reason", resolvedErrorCode.reason(),
+							"message", message
+						)
+					)
+				),
+				TimeFormatUtil.now()
+			)
 		);
 	}
 
-	private void sendErrorToSession(String wsNodeId, String sessionId, int errorEventCode, String reason,
-		String message) {
+	private void sendErrorToSession(String wsNodeId, String sessionId, ErrorCode errorCode, String message) {
 		sendErrorToParticipant(
 			new Participant(wsNodeId, sessionId, null, MIN_COLOR_INDEX, TimeFormatUtil.now()),
-			errorEventCode,
-			reason,
+			errorCode,
 			message
 		);
 	}
@@ -1909,8 +1910,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 				if (room.getRoomType() == Room.QUICK_ROOM_TYPE) {
 					sendErrorToParticipant(
 						requestedParticipant,
-						1999,
-						"INVALID_REQUEST",
+						ErrorCode.INVALID_REQUEST,
 						"update setting is not allowed in quick room"
 					);
 					return RoomJob.FollowUpResult.none();
@@ -1920,7 +1920,12 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 					return RoomJob.FollowUpResult.none();
 				}
 
-				if (rejectIfGameAlreadyExists(room, requestedParticipant, "INVALID_REQUEST", "game already started")) {
+				if (rejectIfGameAlreadyExists(
+					room,
+					requestedParticipant,
+					ErrorCode.INVALID_REQUEST,
+					"game already started"
+				)) {
 					return RoomJob.FollowUpResult.none();
 				}
 
@@ -1928,11 +1933,14 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 					Setting parsedSetting = Setting.fromPayload(settingPayload);
 					room.updateSetting(parsedSetting);
 				} catch (IllegalArgumentException illegalArgumentException) {
+					log.warn("invalid setting payload. roomId={}, sessionId={}",
+						room.getRoomId(),
+						requestedSessionId,
+						illegalArgumentException);
 					sendErrorToParticipant(
 						requestedParticipant,
-						1999,
-						"INVALID_REQUEST",
-						illegalArgumentException.getMessage()
+						ErrorCode.INVALID_REQUEST,
+						"invalid game setting"
 					);
 					return RoomJob.FollowUpResult.none();
 				}
