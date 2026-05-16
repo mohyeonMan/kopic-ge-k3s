@@ -579,11 +579,13 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 
 				Map<String, Object> payload =Map.of(
 					"sid", game.getCurDrawerSid(),
+					"tid", game.getCurTurnId(),
 					"wordChoiceSec", choiceSec
 				);
 
 				Map<String, Object> drawerPayload =Map.of(
 					"sid", game.getCurDrawerSid(),
+					"tid", game.getCurTurnId(),
 					"wordChoiceSec", choiceSec,
 					"words", words
 				);
@@ -1316,6 +1318,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 
 		Map<String, Object> drawerPayload = Map.of(
 			"gid", game.getGameId(),
+			"tid", game.getCurTurnId(),
 			"drawSec", drawSec,
 			"drawerSid", game.getCurDrawerSid(),
 			"answerEntry", game.getAnswerWordEntry()
@@ -1323,6 +1326,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 
 		Map<String, Object> guesserPayload = Map.of(
 			"gid", game.getGameId(),
+			"tid", game.getCurTurnId(),
 			"drawSec", drawSec,
 			"drawerSid", game.getCurDrawerSid(),
 			"answerLength", game.getAnswerWord().length(),
