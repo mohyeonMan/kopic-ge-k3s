@@ -525,7 +525,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 				Map<String, Object> payload = Map.of(
 					"gid", game.getGameId(),
 					"round", game.getCurRoundIndex(),
-					"turn", game.getCurTurnId(),
+					"tid", game.getCurTurnId(),
 					"turnIndex", game.getCurTurnIndex(),
 					"drawerSid", game.getCurDrawerSid(),
 					"turnStartSec", gameTimerProperties.openWordChoice().toSeconds()
@@ -853,7 +853,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 		if (hasAnswer && hasEarnedPoints) {
 			return Map.of(
 				"gid", game.getGameId(),
-				"turn", game.getCurTurnId(),
+				"tid", game.getCurTurnId(),
 				"reason", endReason,
 				"turnEndSec", turnEndSec,
 				"answer", game.getAnswerWord(),
@@ -863,7 +863,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 		if (hasAnswer) {
 			return Map.of(
 				"gid", game.getGameId(),
-				"turn", game.getCurTurnId(),
+				"tid", game.getCurTurnId(),
 				"reason", endReason,
 				"turnEndSec", turnEndSec,
 				"answer", game.getAnswerWord()
@@ -872,7 +872,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 		if (hasEarnedPoints) {
 			return Map.of(
 				"gid", game.getGameId(),
-				"turn", game.getCurTurnId(),
+				"tid", game.getCurTurnId(),
 				"reason", endReason,
 				"turnEndSec", turnEndSec,
 				"earnedPoints", Map.copyOf(game.getEarnedPoints())
@@ -880,7 +880,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 		}
 		return Map.of(
 			"gid", game.getGameId(),
-			"turn", game.getCurTurnId(),
+			"tid", game.getCurTurnId(),
 			"reason", endReason,
 			"turnEndSec", turnEndSec
 		);
