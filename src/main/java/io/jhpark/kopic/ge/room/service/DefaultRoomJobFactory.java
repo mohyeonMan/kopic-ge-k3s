@@ -1228,6 +1228,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	private void broadcastCorrectAnswer(Room room, Game game, String sessionId) {
 		Map<String, Object> payload = Map.of(
 			"gid", game.getGameId(),
+			"tid", game.getCurTurnId(),
 			"sid", sessionId
 		);
 		for (Participant participant : room.getParticipants().values()) {
@@ -1241,7 +1242,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 		}
 		Map<String, Object> payload = Map.of(
 			"gid", game.getGameId(),
-			"turn", game.getCurTurnId(),
+			"tid", game.getCurTurnId(),
 			"drawerSid", game.getCurDrawerSid(),
 			"hintPattern", game.getHintPattern(),
 			"revealedCount", game.getHintRevealedCount(),
