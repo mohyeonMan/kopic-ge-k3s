@@ -48,7 +48,7 @@ public class DefaultEventHandler {
 			case 101 -> handleJoin(event);
 			case 102 -> handleLeave(event);
 			case 103 -> handleCreatePrivateRoom(event);
-			case 107 -> handleSetting(event);
+			case 110 -> handleSetting(event);
 			case 200 -> handleGameStart(event);
 			case 203 -> handleWordChoice(event);
 			// case 1102 -> handleSnapshot(event);

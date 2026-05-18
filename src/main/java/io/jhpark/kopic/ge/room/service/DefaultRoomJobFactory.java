@@ -69,7 +69,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	/**
 	 * 참가자 입장 요청을 처리한다.
 	 * 중복 세션, 정원 초과를 먼저 검증한 뒤 방 상태에 참가자를 반영하고
-	 * 입장자에게는 스냅샷(408), 기존 참가자에게는 입장 알림(301)을 전파한다.
+	 * 입장자에게는 스냅샷(304), 기존 참가자에게는 입장 알림(301)을 전파한다.
 	 * 또한 퀵조인 후보군 갱신과 기존 close-if-empty 타이머 취소를 후속 결과로 반환한다.
 	 */
 	@Override
@@ -78,7 +78,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 				room -> {
 					// 1) 입장 요청 로그를 남기고, 세션/정원 검증부터 진행한다.
 					// 2) 검증 통과 시 참가자를 방 상태에 반영한다.
-					// 3) 신규 참가자에게는 스냅샷(408), 기존 참가자에게는 입장 알림(301)을 전송한다.
+					// 3) 신규 참가자에게는 스냅샷(304), 기존 참가자에게는 입장 알림(301)을 전송한다.
 					// 4) 마지막으로 close-if-empty 타이머 취소 및 퀵조인 후보 동기화 액션을 반환한다.
 
 					log.info("join requested. roomId={}, sessionId={}, nickname={}", room.getRoomId(), sessionId,
@@ -107,7 +107,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 
 					// 방 상태에 참가자를 반영한 뒤, 입장자 본인에게 최신 스냅샷을 전달한다.
 					participants.put(sessionId, newParticipant);
-					sendToParticipant(newParticipant, 408, Map.of(
+					sendToParticipant(newParticipant, 304, Map.of(
 						"sid", sessionId,
 						"rid", room.getRoomId(),
 						"snap", RoomSnapshot.from(room)));
@@ -331,7 +331,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	/**
 	 * 게임 시작 요청을 처리한다.
 	 * 요청자가 방장인지와 최소 인원 조건(2명 이상)을 검증한 뒤
-	 * 게임 객체를 생성하고 게임 시작 이벤트(200)를 브로드캐스트한다.
+	 * 게임 객체를 생성하고 게임 시작 이벤트(400)를 브로드캐스트한다.
 	 * 실제 라운드 진입은 지연 후 nextRound follow-up으로 연결한다.
 	 */
 	@Override
@@ -408,7 +408,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 				);
 
 				for (Participant participant : room.getParticipants().values()) {
-					sendToParticipant(participant, 200, payload); // 게임 시작 알림
+					sendToParticipant(participant, 400, payload); // 게임 시작 알림
 				}
 
 				log.info(
@@ -433,7 +433,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	/**
 	 * 다음 라운드를 시작한다.
 	 * 현재 게임이 활성 상태인지, 다음 라운드가 남아 있는지 확인한 뒤
-	 * 라운드 상태/그리는 순서를 초기화하고 라운드 시작 이벤트(202)를 전파한다.
+	 * 라운드 상태/그리는 순서를 초기화하고 라운드 시작 이벤트(401)를 전파한다.
 	 * 라운드 시작 후 짧은 대기시간을 둔 뒤 nextTurn follow-up으로 이어진다.
 	 */
 	private RoomJob nextRound() {
@@ -467,7 +467,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 				);
 
 				for (Participant participant : room.getParticipants().values()) {
-					sendToParticipant(participant, 202, payload);
+					sendToParticipant(participant, 401, payload);
 				}
 
 				log.info(
@@ -491,7 +491,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	/**
 	 * 다음 턴 준비를 수행한다.
 	 * 현재 라운드의 drawer 목록을 기준으로 Game.startTurn() 전이를 시도하고
-	 * 턴 시작 이벤트(209)를 전파한 뒤 짧은 대기시간 후 단어 선택 창 오픈 잡(openWordChoiceWindow)으로 연결한다.
+	 * 턴 시작 이벤트(402)를 전파한 뒤 짧은 대기시간 후 단어 선택 창 오픈 잡(openWordChoiceWindow)으로 연결한다.
 	 * 전이 불가 상태(phase 불일치, 인덱스 범위 문제)는 예외를 잡아 무시한다.
 	 */
 	private RoomJob nextTurn() {
@@ -536,7 +536,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 					"turnStartSec", gameTimerProperties.openWordChoice().toSeconds()
 				);
 				for (Participant participant : room.getParticipants().values()) {
-					sendToParticipant(participant, 209, payload);
+					sendToParticipant(participant, 402, payload);
 				}
 				return RoomJob.FollowUpResult.followUp(
 					openWordChoiceWindow(),
@@ -549,8 +549,8 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 
 	/**
 	 * 단어 선택 창을 연다.
-	 * 현재 턴 상태가 단어 선택 가능인지 검증한 뒤 단어 선택 이벤트(203)를 전파한다.
-	 * 후보 단어는 drawer에게만 포함해 이벤트(203)로 전파하며
+	 * 현재 턴 상태가 단어 선택 가능인지 검증한 뒤 단어 선택 이벤트(403)를 전파한다.
+	 * 후보 단어는 drawer에게만 포함해 이벤트(403)로 전파하며
 	 * wordChoiceTimeout 타이머 follow-up을 등록한다.
 	 */
 	private RoomJob openWordChoiceWindow() {
@@ -597,9 +597,9 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 
 				for (Participant participant : room.getParticipants().values()) {
 					if (participant.sessionId().equals(game.getCurDrawerSid())) 
-						sendToParticipant(participant, 203, drawerPayload);
+						sendToParticipant(participant, 403, drawerPayload);
 					else
-						sendToParticipant(participant, 203, payload);
+						sendToParticipant(participant, 403, payload);
 				}
 
 				log.info(
@@ -730,7 +730,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 
 	/**
 	 * 턴 종료를 처리한다.
-	 * 종료 가능한 턴 phase만 결과 phase로 전이하고 경량 결과 이벤트(205)를 전파한다.
+	 * 종료 가능한 턴 phase만 결과 phase로 전이하고 경량 결과 이벤트(410)를 전파한다.
 	 * 결과 화면 유지 시간 이후 별도 follow-up에서 READY 전환과 다음 진행을 결정한다.
 	 */
 	private RoomJob turnEnd(String endReason) {
@@ -767,7 +767,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 				long turnEndSec = gameTimerProperties.turnResult().toSeconds();
 				Map<String, Object> payload = turnEndPayload(game, resolvedEndReason, turnEndSec);
 				for (Participant participant : room.getParticipants().values()) {
-					sendToParticipant(participant, 205, payload);
+					sendToParticipant(participant, 410, payload);
 				}
 
 				log.info(
@@ -895,7 +895,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 
 	/**
 	 * 게임 결과 화면을 시작한다.
-	 * 최종 점수 이벤트(206)를 전파하고 결과 화면 유지 후 resultViewEnd follow-up을 예약한다.
+	 * 최종 점수 이벤트(411)를 전파하고 결과 화면 유지 후 resultViewEnd follow-up을 예약한다.
 	 */
 	private RoomJob gameEnd() {
 		return new RoomJob(
@@ -933,7 +933,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 				game.setDeadlineAt(Instant.now().plus(gameTimerProperties.gameResult()));
 				Map<String, Object> payload = gameResultPayload(game);
 				for (Participant participant : room.getParticipants().values()) {
-					sendToParticipant(participant, 206, payload);
+					sendToParticipant(participant, 411, payload);
 				}
 
 				log.info(
@@ -1033,7 +1033,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 		room.endGame();
 		room.getCurrentCanvas().clear();
 		for (Participant participant : room.getParticipants().values()) {
-			sendToParticipant(participant, 207, payload);
+			sendToParticipant(participant, 412, payload);
 		}
 	}
 
@@ -1045,7 +1045,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	/**
 	 * 드로잉 스트로크 입력을 처리한다.
 	 * clear 명령(코드 3)이면 캔버스를 비우고, 일반 스트로크면 캔버스 상태에 누적한다.
-	 * 발신자를 제외한 참가자에게만 드로잉 이벤트(201)를 브로드캐스트한다.
+	 * 발신자를 제외한 참가자에게만 드로잉 이벤트(405)를 브로드캐스트한다.
 	 */
 	@Override
 	public RoomJob drawStroke(String sessionId, JsonNode stroke) {
@@ -1076,7 +1076,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 
 					for (Participant participant : room.getParticipants().values()) {
 						if (!participant.sessionId().equals(sessionId)) {
-							sendToParticipant(participant, 201, stroke);
+							sendToParticipant(participant, 405, stroke);
 						}
 					}
 				}
@@ -1190,13 +1190,13 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	}
 
 	/**
-	 * 발신자를 제외한 모든 참가자에게 일반 채팅 이벤트(204)를 전파한다.
+	 * 발신자를 제외한 모든 참가자에게 일반 채팅 이벤트(407)를 전파한다.
 	 */
 	private void broadcastChatToAllExceptSender(Room room, String sessionId, String text) {
 		// 송신자를 제외한 전체에게 일반 채팅 이벤트를 보낸다.
 		for (Participant participant : room.getParticipants().values()) {
 			if (!participant.sessionId().equals(sessionId)) {
-				sendToParticipant(participant, 204, Map.of(
+				sendToParticipant(participant, 407, Map.of(
 					"sid", sessionId,
 					"t", text
 				));
@@ -1220,7 +1220,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 			if (!visibleToParticipant) {
 				continue;
 			}
-			sendToParticipant(participant, 204, Map.of(
+			sendToParticipant(participant, 407, Map.of(
 				"sid", sessionId,
 				"t", text,
 				"sealed", 1
@@ -1239,7 +1239,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 			"sid", sessionId
 		);
 		for (Participant participant : room.getParticipants().values()) {
-			sendToParticipant(participant, 210, payload);
+			sendToParticipant(participant, 408, payload);
 		}
 	}
 
@@ -1259,13 +1259,13 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 			if (participant.sessionId().equals(game.getCurDrawerSid())) {
 				continue;
 			}
-			sendToParticipant(participant, 211, payload);
+			sendToParticipant(participant, 409, payload);
 		}
 	}
 
 	/**
 	 * 단어 선택 단계를 종료하고 DRAWING 단계로 전환한다.
-	 * 정답 단어를 확정한 뒤 그리기 시작 이벤트(208)를 전파하고
+	 * 정답 단어를 확정한 뒤 그리기 시작 이벤트(404)를 전파하고
 	 * drawingTimeout 타이머를 등록하며, 기존 word-choice 타이머 취소 키를 반환한다.
 	 */
 	private RoomJob.FollowUpResult startDrawingPhase(
@@ -1340,9 +1340,9 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 
 		for (Participant participant : room.getParticipants().values()) {
 			if (participant.sessionId().equals(game.getCurDrawerSid()))
-				sendToParticipant(participant, 208, drawerPayload);
+				sendToParticipant(participant, 404, drawerPayload);
 			else
-				sendToParticipant(participant, 208, guesserPayload);
+				sendToParticipant(participant, 404, guesserPayload);
 		}
 
 		log.info(
@@ -1947,7 +1947,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 
 				for (Participant participant : room.getParticipants().values()) {
 					if (!participant.sessionId().equals(requestedSessionId)) {
-						sendToParticipant(participant, 107, settingPayload);
+						sendToParticipant(participant, 303, settingPayload);
 					}
 				}
 				return RoomJob.FollowUpResult.none();
