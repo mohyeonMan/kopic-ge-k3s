@@ -12,18 +12,19 @@ import java.util.List;
 import java.util.Map;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.annotation.JsonProperty;
 
 public record RoomSnapshot(
-	String roomCode,
-	int roomType,
-	String hostSessionId,
-	List<Object> settings,
-	int participantCount,
-	Map<String, ParticipantSnapshot> participants,
-	List<JsonNode> currentCanvas,
-	GameSnapshot game,
-	Long serverNowMs,
-	Long deadlineAtMs
+	@JsonProperty("rc") String roomCode,
+	@JsonProperty("rt") int roomType,
+	@JsonProperty("hs") String hostSessionId,
+	@JsonProperty("st") List<Object> settings,
+	@JsonProperty("pc") int participantCount,
+	@JsonProperty("ps") Map<String, ParticipantSnapshot> participants,
+	@JsonProperty("cv") List<JsonNode> currentCanvas,
+	@JsonProperty("g") GameSnapshot game,
+	@JsonProperty("now") Long serverNowMs,
+	@JsonProperty("dl") Long deadlineAtMs
 ) {
 
 	public static RoomSnapshot from(Room room) {
@@ -92,28 +93,28 @@ public record RoomSnapshot(
 	}
 
 	public record ParticipantSnapshot(
-		String sessionId,
-		String nickname,
-		int colorIndex
+		@JsonProperty("sid") String sessionId,
+		@JsonProperty("n") String nickname,
+		@JsonProperty("ci") int colorIndex
 	) {
 	}
 
 	public record GameSnapshot(
-		String gid,
-		Game.GamePhase gamePhase,
-		int round,
-		String roundId,
-		Game.RoundPhase roundPhase,
-		List<String> drawerSids,
-		List<String> correctAnswerSids,
-		String turn,
-		Game.TurnPhase turnPhase,
-		String drawerSid,
-		Integer answerLength,
-		String hintPattern,
-		String answer,
-		Map<String, Integer> earnedPoints,
-		Map<String, Integer> totalPoints
+		@JsonProperty("gid") String gid,
+		@JsonProperty("gp") Game.GamePhase gamePhase,
+		@JsonProperty("r") int round,
+		@JsonProperty("ri") String roundId,
+		@JsonProperty("rp") Game.RoundPhase roundPhase,
+		@JsonProperty("dss") List<String> drawerSids,
+		@JsonProperty("ca") List<String> correctAnswerSids,
+		@JsonProperty("tid") String turn,
+		@JsonProperty("tp") Game.TurnPhase turnPhase,
+		@JsonProperty("ds") String drawerSid,
+		@JsonProperty("al") Integer answerLength,
+		@JsonProperty("hp") String hintPattern,
+		@JsonProperty("ans") String answer,
+		@JsonProperty("ep") Map<String, Integer> earnedPoints,
+		@JsonProperty("pts") Map<String, Integer> totalPoints
 	) {
 
 		static GameSnapshot from(Room room) {

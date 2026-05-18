@@ -67,11 +67,11 @@ public class DefaultEventHandler {
 
 	private void handleCreatePrivateRoom(WsEvent event) {
 		JsonNode payload = event.envelope().p();
-		if (!validateRequired(event, payload, "nickname")) {
+		if (!validateRequired(event, payload, "n")) {
 			return;
 		}
 
-		String nickname = eventMapper.text(payload, "nickname");
+		String nickname = eventMapper.text(payload, "n");
 		RoomSubmitResult result = roomService.createPrivateRoom(
 			event.senderSessionId(),
 			nickname,
@@ -82,12 +82,12 @@ public class DefaultEventHandler {
 
 	private void handleJoin(WsEvent event) {
 		JsonNode payload = event.envelope().p();
-		if (!validateRequired(event, payload, "nickname")) {
+		if (!validateRequired(event, payload, "n")) {
 			return;
 		}
 
-		String roomCode = eventMapper.text(payload, "roomCode");
-		String nickname = eventMapper.text(payload, "nickname");
+		String roomCode = eventMapper.text(payload, "rc");
+		String nickname = eventMapper.text(payload, "n");
 
 		RoomSubmitResult result;
 		if (!isBlank(roomCode)) {
@@ -156,11 +156,11 @@ public class DefaultEventHandler {
 
 	private void handleWordChoice(WsEvent event) {
 		JsonNode payload = event.envelope().p();
-		if (!validateRequired(event, payload, "choiceIndex")) {
+		if (!validateRequired(event, payload, "ci")) {
 			return;
 		}
 
-		JsonNode choiceIndexNode = payload.path("choiceIndex");
+		JsonNode choiceIndexNode = payload.path("ci");
 		if (!choiceIndexNode.canConvertToInt()) {
 			sendRejected(
 				event.senderSessionId(),
@@ -237,8 +237,8 @@ public class DefaultEventHandler {
 	) {
 		return eventMapper.rawMapper()
 			.createObjectNode()
-			.put("reason", reason)
-			.put("message", message);
+			.put("rsn", reason)
+			.put("msg", message);
 	}
 
 	private boolean isBlank(String value) {

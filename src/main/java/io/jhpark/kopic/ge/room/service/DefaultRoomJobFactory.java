@@ -26,6 +26,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -110,16 +111,16 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 					sendToParticipant(newParticipant, 304, Map.of(
 						"sid", sessionId,
 						"rid", room.getRoomId(),
-						"snap", RoomSnapshot.from(room)));
+						"s", RoomSnapshot.from(room)));
 
 					log.info("joined participant. roomId={}, sessionId={}, nickname={}", room.getRoomId(), sessionId,
 							nickname);
 					// 새 참가자 정보를 방의 모든 참가자에게 브로드캐스트한다.
 					for (Participant participant : participants.values()) {
 						sendToParticipant(participant, 301, Map.of(
-								"sessionId", sessionId,
-								"nickname", nickname,
-								"colorIndex", newParticipant.colorIndex()));
+								"sid", sessionId,
+								"n", nickname,
+								"ci", newParticipant.colorIndex()));
 					}
 
 					log.info("current room participants: {}", room.getParticipants().keySet());
@@ -291,7 +292,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 						? Map.of("sid", sessionId)
 						: Map.of(
 							"sid", sessionId,
-							"nextHost", currentHostSessionId
+							"nh", currentHostSessionId
 						);
 					sendToParticipant(participant, 302, payload);
 				}
@@ -404,7 +405,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 
 				Map<String, Object> payload = Map.of(
 					"gid", newGame.getGameId(),
-					"gameStartSec", gameTimerProperties.startRound().toSeconds()
+					"sec", gameTimerProperties.startRound().toSeconds()
 				);
 
 				for (Participant participant : room.getParticipants().values()) {
@@ -460,10 +461,10 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 
 				Map<String, Object> payload = Map.of(
 					"gid", game.getGameId(),
-					"round", game.getCurRoundIndex(),
-					"roundId", game.getCurRoundId(),
-					"drawerSids", game.getCurRoundDrawerSids(),
-					"roundStartSec", gameTimerProperties.nextTurn().toSeconds()
+					"r", game.getCurRoundIndex(),
+					"ri", game.getCurRoundId(),
+					"dss", game.getCurRoundDrawerSids(),
+					"sec", gameTimerProperties.nextTurn().toSeconds()
 				);
 
 				for (Participant participant : room.getParticipants().values()) {
@@ -529,11 +530,11 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 
 				Map<String, Object> payload = Map.of(
 					"gid", game.getGameId(),
-					"round", game.getCurRoundIndex(),
+					"r", game.getCurRoundIndex(),
 					"tid", game.getCurTurnId(),
-					"turnIndex", game.getCurTurnIndex(),
-					"drawerSid", game.getCurDrawerSid(),
-					"turnStartSec", gameTimerProperties.openWordChoice().toSeconds()
+					"ti", game.getCurTurnIndex(),
+					"ds", game.getCurDrawerSid(),
+					"sec", gameTimerProperties.openWordChoice().toSeconds()
 				);
 				for (Participant participant : room.getParticipants().values()) {
 					sendToParticipant(participant, 402, payload);
@@ -583,16 +584,16 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 				game.setDeadlineAt(Instant.now().plusSeconds(choiceSec));
 
 				Map<String, Object> payload =Map.of(
-					"sid", game.getCurDrawerSid(),
+					"ds", game.getCurDrawerSid(),
 					"tid", game.getCurTurnId(),
-					"wordChoiceSec", choiceSec
+					"sec", choiceSec
 				);
 
 				Map<String, Object> drawerPayload =Map.of(
-					"sid", game.getCurDrawerSid(),
+					"ds", game.getCurDrawerSid(),
 					"tid", game.getCurTurnId(),
-					"wordChoiceSec", choiceSec,
-					"words", words
+					"sec", choiceSec,
+					"w", words
 				);
 
 				for (Participant participant : room.getParticipants().values()) {
@@ -861,35 +862,35 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 			return Map.of(
 				"gid", game.getGameId(),
 				"tid", game.getCurTurnId(),
-				"reason", endReason,
-				"turnEndSec", turnEndSec,
-				"answer", game.getAnswerWord(),
-				"earnedPoints", Map.copyOf(game.getEarnedPoints())
+				"rsn", endReason,
+				"sec", turnEndSec,
+				"ans", game.getAnswerWord(),
+				"ep", Map.copyOf(game.getEarnedPoints())
 			);
 		}
 		if (hasAnswer) {
 			return Map.of(
 				"gid", game.getGameId(),
 				"tid", game.getCurTurnId(),
-				"reason", endReason,
-				"turnEndSec", turnEndSec,
-				"answer", game.getAnswerWord()
+				"rsn", endReason,
+				"sec", turnEndSec,
+				"ans", game.getAnswerWord()
 			);
 		}
 		if (hasEarnedPoints) {
 			return Map.of(
 				"gid", game.getGameId(),
 				"tid", game.getCurTurnId(),
-				"reason", endReason,
-				"turnEndSec", turnEndSec,
-				"earnedPoints", Map.copyOf(game.getEarnedPoints())
+				"rsn", endReason,
+				"sec", turnEndSec,
+				"ep", Map.copyOf(game.getEarnedPoints())
 			);
 		}
 		return Map.of(
 			"gid", game.getGameId(),
 			"tid", game.getCurTurnId(),
-			"reason", endReason,
-			"turnEndSec", turnEndSec
+			"rsn", endReason,
+			"sec", turnEndSec
 		);
 	}
 
@@ -994,13 +995,13 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 		if (game.getTotalPoints() != null && !game.getTotalPoints().isEmpty()) {
 			return Map.of(
 				"gid", game.getGameId(),
-				"resultSec", gameTimerProperties.gameResult().toSeconds(),
-				"totalPoints", Map.copyOf(game.getTotalPoints())
+				"sec", gameTimerProperties.gameResult().toSeconds(),
+				"pts", Map.copyOf(game.getTotalPoints())
 			);
 		}
 		return Map.of(
 			"gid", game.getGameId(),
-			"resultSec", gameTimerProperties.gameResult().toSeconds()
+			"sec", gameTimerProperties.gameResult().toSeconds()
 		);
 	}
 
@@ -1008,13 +1009,13 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 		if (quickRestart) {
 			return Map.of(
 				"gid", gameId,
-				"reason", reason,
-				"restartSec", gameTimerProperties.quickRestart().toSeconds()
+				"rsn", reason,
+				"sec", gameTimerProperties.quickRestart().toSeconds()
 			);
 		}
 		return Map.of(
 			"gid", gameId,
-			"reason", reason
+			"rsn", reason
 		);
 	}
 
@@ -1223,7 +1224,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 			sendToParticipant(participant, 407, Map.of(
 				"sid", sessionId,
 				"t", text,
-				"sealed", 1
+				"s", 1
 			));
 		}
 	}
@@ -1250,10 +1251,10 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 		Map<String, Object> payload = Map.of(
 			"gid", game.getGameId(),
 			"tid", game.getCurTurnId(),
-			"drawerSid", game.getCurDrawerSid(),
-			"hintPattern", game.getHintPattern(),
-			"revealedCount", game.getHintRevealedCount(),
-			"totalRevealCount", game.getHintTotalRevealCount()
+			"ds", game.getCurDrawerSid(),
+			"hp", game.getHintPattern(),
+			"hc", game.getHintRevealedCount(),
+			"ht", game.getHintTotalRevealCount()
 		);
 		for (Participant participant : room.getParticipants().values()) {
 			if (participant.sessionId().equals(game.getCurDrawerSid())) {
@@ -1261,6 +1262,15 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 			}
 			sendToParticipant(participant, 409, payload);
 		}
+	}
+
+	private Map<String, Object> answerEntryPayload(WordEntry wordEntry) {
+		Map<String, Object> payload = new LinkedHashMap<>();
+		payload.put("w", wordEntry.word());
+		if (!isBlank(wordEntry.description())) {
+			payload.put("d", wordEntry.description());
+		}
+		return payload;
 	}
 
 	/**
@@ -1324,18 +1334,18 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 		Map<String, Object> drawerPayload = Map.of(
 			"gid", game.getGameId(),
 			"tid", game.getCurTurnId(),
-			"drawSec", drawSec,
-			"drawerSid", game.getCurDrawerSid(),
-			"answerEntry", game.getAnswerWordEntry()
+			"sec", drawSec,
+			"ds", game.getCurDrawerSid(),
+			"ae", answerEntryPayload(game.getAnswerWordEntry())
 		);
 
 		Map<String, Object> guesserPayload = Map.of(
 			"gid", game.getGameId(),
 			"tid", game.getCurTurnId(),
-			"drawSec", drawSec,
-			"drawerSid", game.getCurDrawerSid(),
-			"answerLength", game.getAnswerWord().length(),
-			"hintPattern", hintPattern == null ? "" : hintPattern
+			"sec", drawSec,
+			"ds", game.getCurDrawerSid(),
+			"al", game.getAnswerWord().length(),
+			"hp", hintPattern == null ? "" : hintPattern
 		);
 
 		for (Participant participant : room.getParticipants().values()) {
@@ -1869,8 +1879,8 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 					resolvedErrorCode.eventCode(),
 					commonMapper.rawMapper().valueToTree(
 						Map.of(
-							"reason", resolvedErrorCode.reason(),
-							"message", message
+							"rsn", resolvedErrorCode.reason(),
+							"msg", message
 						)
 					)
 				),
