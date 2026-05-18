@@ -39,7 +39,7 @@ public final class Room {
 		this.capacity = Room.DEFAULT_ROOM_CAPACITY;
 		this.createdAt = Instant.now();
 		this.hostSessionId = hostSessionId;
-		this.setting = Setting.defaultValue();
+		this.setting = roomType == PRIVATE_ROOM_TYPE ? Setting.privateDefaultValue() : Setting.publicDefaultValue();
 	}
 
 	public static String newRoomId() {

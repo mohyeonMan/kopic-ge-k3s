@@ -18,16 +18,31 @@ public record Setting(
 
 	private static final int PAYLOAD_SIZE = 10;
 
-	public static Setting defaultValue() {
+	public static Setting publicDefaultValue() {
 		return new Setting(
 			3,
-			40,
+			60,
 			10,
 			3,
-			30,
+			50,
 			1,
 			DrawerOrderMode.JOIN_ORDER,
 			EndMode.TIME_OR_ALL_CORRECT,
+			CustomWordMode.BASE_PLUS_CUSTOM,
+			""
+		);
+	}
+
+	public static Setting privateDefaultValue() {
+		return new Setting(
+			5,
+			60,
+			10,
+			3,
+			50,
+			1,
+			DrawerOrderMode.JOIN_ORDER,
+			EndMode.FIRST_CORRECT,
 			CustomWordMode.BASE_PLUS_CUSTOM,
 			""
 		);
