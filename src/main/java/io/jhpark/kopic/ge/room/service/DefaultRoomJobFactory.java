@@ -279,6 +279,26 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 							turnPhase,
 							"DRAWER_LEFT"
 						);
+					} else if (game.isPlaying()
+						&& !wasCurrentDrawer
+						&& turnPhase == Game.TurnPhase.DRAWING
+						&& game.getGameSetting().endMode() == EndMode.TIME_OR_ALL_CORRECT
+						&& allGuessersSolved(room, game)
+						&& !isBlank(currentTurnId)
+					) {
+						followUp = new RoomJob.FollowUp(
+							turnEnd("ALL_CORRECT"),
+							null,
+							null
+						);
+						cancelTimerKey = DRAWING_PHASE_TIMER_CLEAR_KEY;
+						log.info(
+							"all remaining guessers solved after participant left. roomId={}, leftSessionId={}, turnId={}, forcedEndReason={}",
+							room.getRoomId(),
+							sessionId,
+							currentTurnId,
+							"ALL_CORRECT"
+						);
 					}
 				} else if (room.getAutoRestartAt() != null && participants.size() < 2) {
 					cancelTimerKey = QUICK_RESTART_TIMER_KEY;
