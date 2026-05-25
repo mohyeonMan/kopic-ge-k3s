@@ -2,7 +2,10 @@ package io.jhpark.kopic.ge.room.service;
 
 import io.jhpark.kopic.ge.common.error.ErrorCode;
 import io.jhpark.kopic.ge.common.metrics.GeMetrics;
+import io.jhpark.kopic.ge.room.directory.GeStateRecorder;
+import io.jhpark.kopic.ge.room.dto.Room;
 import io.jhpark.kopic.ge.room.dto.RoomSession;
+import io.jhpark.kopic.ge.room.registry.DefaultQuickRoomCandidateStore;
 import io.jhpark.kopic.ge.room.registry.RoomSessionStore;
 import java.time.Instant;
 import java.util.concurrent.Executor;
@@ -20,17 +23,23 @@ public final class DefaultRoomRunner implements RoomRunner {
 	private final Executor executor;
 	private final ScheduledExecutorService scheduler;
 	private final GeMetrics geMetrics;
+	private final DefaultQuickRoomCandidateStore quickRoomCandidates;
+	private final GeStateRecorder geStateRecorder;
 
 	public DefaultRoomRunner(
 		RoomSessionStore sessionStore,
 		@Qualifier("roomRunnerExecutor") Executor executor,
 		@Qualifier("roomRunnerScheduler") ScheduledExecutorService scheduler,
-		GeMetrics geMetrics
+		GeMetrics geMetrics,
+		DefaultQuickRoomCandidateStore quickRoomCandidates,
+		GeStateRecorder geStateRecorder
 	) {
 		this.sessionStore = sessionStore;
 		this.executor = executor;
 		this.scheduler = scheduler;
 		this.geMetrics = geMetrics;
+		this.quickRoomCandidates = quickRoomCandidates;
+		this.geStateRecorder = geStateRecorder;
 	}
 
 	@Override
@@ -124,11 +133,11 @@ public final class DefaultRoomRunner implements RoomRunner {
 				return true;
 			}
 			case ADD_QUICK_JOIN_CANDIDATE -> {
-				sessionStore.addQuickJoinCandidate(roomId);
+				quickRoomCandidates.add(roomId);
 				log.debug("quick join candidate added. roomId={}", roomId);
 			}
 			case REMOVE_QUICK_JOIN_CANDIDATE -> {
-				sessionStore.removeQuickJoinCandidate(roomId);
+				quickRoomCandidates.remove(roomId);
 				log.debug("quick join candidate removed. roomId={}", roomId);
 			}
 			case NONE -> {
@@ -226,6 +235,12 @@ public final class DefaultRoomRunner implements RoomRunner {
 		int participantCount = session.getRoom().getParticipants().size();
 		log.debug("closing room actor requested. roomId={}, participantCount={}", roomId, participantCount);
 		boolean removed = sessionStore.remove(roomId, session);
+		if (removed) {
+			geStateRecorder.recordRoomClosed();
+		}
+		if (removed && session.getRoom().getRoomType() == Room.QUICK_ROOM_TYPE) {
+			quickRoomCandidates.remove(roomId);
+		}
 		session.close();
 		if (removed) {
 			log.debug("room actor closed. roomId={}", roomId);

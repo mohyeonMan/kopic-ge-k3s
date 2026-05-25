@@ -27,7 +27,7 @@ kopic:
     heartbeat-ttl: ${KOPIC_DIRECTORY_HEARTBEAT_TTL:15s}
     room-code-ttl: ${KOPIC_DIRECTORY_ROOM_CODE_TTL:6h}
     heartbeat-interval-ms: ${KOPIC_DIRECTORY_HEARTBEAT_INTERVAL_MS:5000}
-    load-interval-ms: ${KOPIC_DIRECTORY_LOAD_INTERVAL_MS:5000}
+    load-interval-ms: ${KOPIC_DIRECTORY_LOAD_INTERVAL_MS:60000}
     reconciliation-interval-ms: ${KOPIC_DIRECTORY_RECONCILIATION_INTERVAL_MS:3600000}
     initial-delay-ms: ${KOPIC_DIRECTORY_INITIAL_DELAY_MS:2000}
     room-weight: ${KOPIC_DIRECTORY_ROOM_WEIGHT:2.0}

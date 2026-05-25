@@ -1,6 +1,6 @@
 package io.jhpark.kopic.ge.room.registry;
 
-import io.jhpark.kopic.ge.room.directory.RoomDirectory;
+import io.jhpark.kopic.ge.room.directory.GeStateRecorder;
 import io.jhpark.kopic.ge.room.dto.Room;
 import io.jhpark.kopic.ge.room.dto.RoomSession;
 import java.util.ArrayList;
@@ -19,9 +19,8 @@ import org.springframework.stereotype.Component;
 public class DefaultRoomSessionStore implements RoomSessionStore {
 
 	private final Map<String, RoomSession> sessions = new ConcurrentHashMap<>();
-	private final InMemoryPrivateRoomCodeStore privateRoomCodes;
-	private final InMemoryQuickRoomCandidateStore quickRoomCandidates;
-	private final RoomDirectory roomDirectory;
+	private final DefaultPrivateRoomCodeStore privateRoomCodes;
+	private final GeStateRecorder geStateRecorder;
 
 	@Override
 	public Optional<RoomSession> find(String roomId) {
@@ -38,7 +37,7 @@ public class DefaultRoomSessionStore implements RoomSessionStore {
 		Room room = session.getRoom();
 		String roomId = room.getRoomId();
 		sessions.put(roomId, session);
-		
+
 		addIndexesAndDirectory(room);
 	}
 
@@ -58,70 +57,6 @@ public class DefaultRoomSessionStore implements RoomSessionStore {
 			removeIndexesAndDirectory(expected.getRoom());
 		}
 		return removed;
-	}
-
-	@Override
-	public Optional<String> findFirstAvailableQuickRoomId() {
-		Optional<String> roomId = quickRoomCandidates.findFirstAvailable(sessions::get);
-		if (roomId.isPresent()) {
-			log.debug(
-				"quick join candidate selected. roomId={}, quickJoinIds={}",
-				roomId.get(),
-				quickRoomCandidates.idsForLog()
-			);
-		} else {
-			log.warn("no quick join candidate available. quickJoinIds={}", quickRoomCandidates.idsForLog());
-		}
-		return roomId;
-	}
-
-	@Override
-	public void addQuickJoinCandidate(String roomId) {
-		Optional<RoomSession> sessionOpt = find(roomId);
-		if (!sessionOpt.isPresent()) {
-			return;
-		}
-		Room room = sessionOpt.get().getRoom();
-		if (room.getRoomType() != Room.QUICK_ROOM_TYPE) {
-			return;
-		}
-		if (room.getParticipants().size() >= room.getCapacity()) {
-			return;
-		}
-		if (quickRoomCandidates.add(roomId)) {
-			roomDirectory.addQuickAvailability(room);
-			log.debug(
-				"quick join candidate added. roomId={}, quickJoinIds={}",
-				room.getRoomId(),
-				quickRoomCandidates.idsForLog()
-			);
-			return;
-		}
-		log.debug(
-			"quick join candidate add skipped. roomId={}, quickJoinIds={}",
-			room.getRoomId(),
-			quickRoomCandidates.idsForLog()
-		);
-	}
-
-	@Override
-	public void addIndexPrivateRoom(String roomId, String roomCode) {
-		privateRoomCodes.indexIfAbsent(roomId, roomCode);
-		roomDirectory.addPrivateRoomCode(roomId, roomCode);
-	}
-
-	@Override
-	public void removeIndexPrivateRoom(String roomId, String roomCode) {
-		privateRoomCodes.remove(roomId);
-		roomDirectory.removePrivateRoomCode(roomCode);
-	}
-
-	@Override
-	public void removeQuickJoinCandidate(String roomId) {
-		boolean removed = quickRoomCandidates.remove(roomId);
-		if (removed) {
-			roomDirectory.removeQuickAvailability(roomId);
-		}
 	}
 
 	@Override
@@ -153,15 +88,9 @@ public class DefaultRoomSessionStore implements RoomSessionStore {
 		initialDelayString = "${kopic.directory.initial-delay-ms:2000}"
 	)
 	public void reconcileDirectory() {
-		roomDirectory.refresh(snapshotRooms());
-	}
-
-	@Scheduled(
-		fixedDelayString = "${kopic.directory.load-interval-ms:5000}",
-		initialDelayString = "${kopic.directory.initial-delay-ms:2000}"
-	)
-	public void refreshLoad() {
-		roomDirectory.refreshLoad(snapshotRooms());
+		List<Room> rooms = snapshotRooms();
+		privateRoomCodes.refresh(rooms);
+		geStateRecorder.reconcile(rooms.size(), countParticipants(rooms));
 	}
 
 	private List<Room> snapshotRooms() {
@@ -172,24 +101,23 @@ public class DefaultRoomSessionStore implements RoomSessionStore {
 		return List.copyOf(rooms);
 	}
 
-	public void removeIndexesAndDirectory(Room room) {
-		if (room.getRoomType() == Room.PRIVATE_ROOM_TYPE) {
-			removeIndexPrivateRoom(room.getRoomId(), room.getRoomCode());
-			return;
+	private int countParticipants(List<Room> rooms) {
+		int totalParticipants = 0;
+		for (Room room : rooms) {
+			totalParticipants += room.getParticipants().size();
 		}
+		return totalParticipants;
+	}
 
-		if (room.getRoomType() == Room.QUICK_ROOM_TYPE) {
-			removeQuickJoinCandidate(room.getRoomId());
-			return;
+	private void removeIndexesAndDirectory(Room room) {
+		if (room.getRoomType() == Room.PRIVATE_ROOM_TYPE) {
+			privateRoomCodes.remove(room.getRoomId(), room.getRoomCode());
 		}
 	}
 
-	public void addIndexesAndDirectory(Room room) {
+	private void addIndexesAndDirectory(Room room) {
 		if (room.getRoomType() == Room.PRIVATE_ROOM_TYPE) {
-			addIndexPrivateRoom(room.getRoomId(), room.getRoomCode());
-		}
-		if (room.getRoomType() == Room.QUICK_ROOM_TYPE) {
-			addQuickJoinCandidate(room.getRoomId());
+			privateRoomCodes.add(room.getRoomId(), room.getRoomCode());
 		}
 	}
 

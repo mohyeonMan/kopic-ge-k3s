@@ -1,8 +1,10 @@
 package io.jhpark.kopic.ge.room.service;
 
 import io.jhpark.kopic.ge.common.error.ErrorCode;
+import io.jhpark.kopic.ge.room.directory.GeStateRecorder;
 import io.jhpark.kopic.ge.room.dto.Room;
 import io.jhpark.kopic.ge.room.dto.RoomSession;
+import io.jhpark.kopic.ge.room.registry.DefaultQuickRoomCandidateStore;
 import io.jhpark.kopic.ge.room.registry.RoomSessionStore;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
@@ -19,6 +21,8 @@ public class DefaultRoomService implements RoomService {
 	private static final int PRIVATE_ROOM_CODE_MAX_RETRY = 20;
 
 	private final RoomSessionStore sessionStore;
+	private final DefaultQuickRoomCandidateStore quickRoomCandidates;
+	private final GeStateRecorder geStateRecorder;
 	private final RoomRunner roomRunner;
 	private final RoomJobFactory roomJobFactory;
 
@@ -63,6 +67,10 @@ public class DefaultRoomService implements RoomService {
 
 	private Room putRoom(Room room) {
 		sessionStore.put(new RoomSession(room));
+		geStateRecorder.recordRoomCreated();
+		if (room.getRoomType() == Room.QUICK_ROOM_TYPE) {
+			quickRoomCandidates.add(room.getRoomId());
+		}
 		log.info(
 			"room actor bootstrapped. roomId={}, roomCode={}, roomType={}, capacity={}",
 			room.getRoomId(),
@@ -127,7 +135,7 @@ public class DefaultRoomService implements RoomService {
 
 	@Override
 	public RoomSubmitResult quickJoin(String sessionId, String nickname, String wsNodeId) {
-		Optional<String> candidateRoomId = sessionStore.findFirstAvailableQuickRoomId();
+		Optional<String> candidateRoomId = quickRoomCandidates.findFirstAvailableRoomId();
 		String roomId;
 		if (candidateRoomId.isPresent()) {
 			roomId = candidateRoomId.get();

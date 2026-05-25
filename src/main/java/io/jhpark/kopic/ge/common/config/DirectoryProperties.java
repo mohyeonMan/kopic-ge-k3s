@@ -22,7 +22,7 @@ public record DirectoryProperties(
 		heartbeatTtl = heartbeatTtl == null ? Duration.ofSeconds(15) : heartbeatTtl;
 		roomCodeTtl = roomCodeTtl == null ? Duration.ofHours(6) : roomCodeTtl;
 		heartbeatIntervalMs = heartbeatIntervalMs <= 0 ? 5000 : heartbeatIntervalMs;
-		loadIntervalMs = loadIntervalMs <= 0 ? 5000 : loadIntervalMs;
+		loadIntervalMs = loadIntervalMs <= 0 ? 60000 : loadIntervalMs;
 		reconciliationIntervalMs = reconciliationIntervalMs <= 0 ? 3600000 : reconciliationIntervalMs;
 		initialDelayMs = Math.max(0, initialDelayMs);
 		roomWeight = roomWeight <= 0 ? 2.0 : roomWeight;
