@@ -3,6 +3,11 @@ spring:
     name: kopic-ge
   profiles:
     default: local
+  data:
+    redis:
+      host: ${KOPIC_REDIS_HOST:localhost}
+      port: ${KOPIC_REDIS_PORT:6379}
+      password: ${KOPIC_REDIS_PASSWORD:}
 
 management:
   endpoints:
@@ -16,6 +21,21 @@ management:
 
 kopic:
   node-id: ${KOPIC_NODE_ID:ge-local}
+  directory:
+    enabled: ${KOPIC_DIRECTORY_ENABLED:true}
+    status: ${KOPIC_DIRECTORY_STATUS:ACTIVE}
+    heartbeat-ttl: ${KOPIC_DIRECTORY_HEARTBEAT_TTL:15s}
+    room-code-ttl: ${KOPIC_DIRECTORY_ROOM_CODE_TTL:6h}
+    heartbeat-interval-ms: ${KOPIC_DIRECTORY_HEARTBEAT_INTERVAL_MS:5000}
+    load-interval-ms: ${KOPIC_DIRECTORY_LOAD_INTERVAL_MS:5000}
+    reconciliation-interval-ms: ${KOPIC_DIRECTORY_RECONCILIATION_INTERVAL_MS:3600000}
+    initial-delay-ms: ${KOPIC_DIRECTORY_INITIAL_DELAY_MS:2000}
+    room-weight: ${KOPIC_DIRECTORY_ROOM_WEIGHT:2.0}
+    keys:
+      ge-prefix: ${KOPIC_DIRECTORY_KEY_GE_PREFIX:ge:}
+      ge-load: ${KOPIC_DIRECTORY_KEY_GE_LOAD:ge:load}
+      quick-available: ${KOPIC_DIRECTORY_KEY_QUICK_AVAILABLE:quick:available}
+      room-code-prefix: ${KOPIC_DIRECTORY_KEY_ROOM_CODE_PREFIX:roomcode:}
   game-timer:
     close-if-empty: ${KOPIC_GAME_TIMER_CLOSE_IF_EMPTY:30s}
     start-round: ${KOPIC_GAME_TIMER_START_ROUND:3s}
@@ -29,4 +49,3 @@ kopic:
     inbound-queue-prefix: ${KOPIC_RABBIT_INBOUND_QUEUE_PREFIX:kopic.ge.event.}
     inbound-routing-key-prefix: ${KOPIC_RABBIT_INBOUND_ROUTING_KEY_PREFIX:kopic.ge.route.}
     outbound-routing-key-prefix: ${KOPIC_RABBIT_OUTBOUND_ROUTING_KEY_PREFIX:kopic.ws.route.}
-

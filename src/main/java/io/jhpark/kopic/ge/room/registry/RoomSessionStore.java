@@ -1,6 +1,8 @@
 package io.jhpark.kopic.ge.room.registry;
 
 import java.util.Optional;
+
+import io.jhpark.kopic.ge.room.dto.Room;
 import io.jhpark.kopic.ge.room.dto.RoomSession;
 
 public interface RoomSessionStore {
@@ -16,6 +18,10 @@ public interface RoomSessionStore {
 	boolean remove(String roomId, RoomSession expected);
 
 	Optional<String> findFirstAvailableQuickRoomId();
+
+	void addIndexPrivateRoom(String roomId, String roomCode);
+
+	void removeIndexPrivateRoom(String roomId, String roomCode);
 
 	void addQuickJoinCandidate(String roomId);
 

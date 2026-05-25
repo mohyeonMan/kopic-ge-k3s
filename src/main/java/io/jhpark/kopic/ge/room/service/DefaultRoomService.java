@@ -27,13 +27,47 @@ public class DefaultRoomService implements RoomService {
 		int roomType,
 		String hostSessionId
 	) {
-		Room room = newRoom(roomType, hostSessionId);
+		if (roomType == Room.PRIVATE_ROOM_TYPE) {
+			return bootstrapPrivateRoom(hostSessionId);
+		}
+
+		Room room = new Room(roomType, hostSessionId);
+		return putRoom(room);
+	}
+
+	private Room bootstrapPrivateRoom(String hostSessionId) {
+		for (int retry = 0; retry < PRIVATE_ROOM_CODE_MAX_RETRY; retry++) {
+			Room room = new Room(Room.PRIVATE_ROOM_TYPE, hostSessionId);
+			if (!isGeneratedPrivateRoomAvailable(room)) {
+				continue;
+			}
+			try {
+				return putRoom(room);
+			} catch (IllegalStateException illegalStateException) {
+				log.debug(
+					"private room bootstrap retrying because roomCode indexing failed. roomId={}, roomCode={}, retry={}",
+					room.getRoomId(),
+					room.getRoomCode(),
+					retry + 1
+				);
+				log.debug(
+					"private room bootstrap failure detail. roomId={}, roomCode={}",
+					room.getRoomId(),
+					room.getRoomCode(),
+					illegalStateException
+				);
+			}
+		}
+		throw new IllegalStateException("failed to allocate unique private roomCode");
+	}
+
+	private Room putRoom(Room room) {
 		sessionStore.put(new RoomSession(room));
 		log.info(
 			"room actor bootstrapped. roomId={}, roomCode={}, roomType={}, capacity={}",
 			room.getRoomId(),
 			room.getRoomCode(),
-			roomType,
+			room.getRoomType(),
 			room.getCapacity()
 		);
 		return room;
@@ -48,7 +82,19 @@ public class DefaultRoomService implements RoomService {
 
 	@Override
 	public RoomSubmitResult createPrivateRoom(String sessionId, String nickname, String wsNodeId) {
-		Room room = bootstrapRoom(Room.PRIVATE_ROOM_TYPE, sessionId);
+		Room room;
+		try {
+			room = bootstrapRoom(Room.PRIVATE_ROOM_TYPE, sessionId);
+		} catch (IllegalStateException illegalStateException) {
+			log.warn("private room creation rejected because roomCode allocation failed. sessionId={}, nickname={}",
+				sessionId,
+				nickname,
+				illegalStateException);
+			return RoomSubmitResult.rejected(
+				ErrorCode.CONFLICT,
+				"방을 생성할 수 없습니다. 잠시 후 다시 시도해주세요."
+			);
+		}
 		log.debug(
 			"private room created. roomId={}, roomCode={}, sessionId={}, nickname={}",
 			room.getRoomId(),
@@ -128,21 +174,9 @@ public class DefaultRoomService implements RoomService {
 		return submit(roomId, roomJobFactory.explicitWordChoice(sessionId, choiceIndex));
 	}
 
-	private Room newRoom(int roomType, String hostSessionId) {
-		if (roomType != Room.PRIVATE_ROOM_TYPE) {
-			return new Room(roomType, hostSessionId);
-		}
-
-		for (int retry = 0; retry < PRIVATE_ROOM_CODE_MAX_RETRY; retry++) {
-			Room room = new Room(roomType, hostSessionId);
-			String roomCode = room.getRoomCode();
-			if (sessionStore.findRoomIdByPrivateCode(roomCode).isEmpty()
-				&& sessionStore.find(room.getRoomId()).isEmpty()
-			) {
-				return room;
-			}
-		}
-		throw new IllegalStateException("failed to allocate unique private roomCode");
+	private boolean isGeneratedPrivateRoomAvailable(Room room) {
+		return sessionStore.findRoomIdByPrivateCode(room.getRoomCode()).isEmpty()
+			&& sessionStore.find(room.getRoomId()).isEmpty();
 	}
 
 	private boolean isBlank(String value) {
