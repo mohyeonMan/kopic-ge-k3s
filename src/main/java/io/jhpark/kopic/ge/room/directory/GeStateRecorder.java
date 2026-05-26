@@ -1,6 +1,6 @@
 package io.jhpark.kopic.ge.room.directory;
 
-import io.jhpark.kopic.ge.common.config.DirectoryProperties;
+import io.jhpark.kopic.ge.common.config.KopicRedisProperties;
 import io.jhpark.kopic.ge.common.config.NodeProperties;
 import io.jhpark.kopic.ge.common.redis.RedisService;
 import jakarta.annotation.PreDestroy;
@@ -21,7 +21,7 @@ public class GeStateRecorder {
 	private final AtomicInteger participantCount = new AtomicInteger();
 
 	private final RedisService redisService;
-	private final DirectoryProperties directoryProperties;
+	private final KopicRedisProperties redisProperties;
 	private final NodeProperties nodeProperties;
 
 	public void recordRoomCreated() {
@@ -48,30 +48,30 @@ public class GeStateRecorder {
 	}
 
 	@Scheduled(
-		fixedDelayString = "${kopic.directory.heartbeat-interval-ms:5000}",
-		initialDelayString = "${kopic.directory.initial-delay-ms:2000}"
+		fixedDelayString = "${kopic.redis.heartbeat-interval:10s}",
+		initialDelayString = "${kopic.redis.initial-delay:2s}"
 	)
 	public void heartbeat() {
 		runStatusUpdate("heartbeat", () -> {
 			redisService.set(
-				directoryProperties.geKey(geId()),
+				redisProperties.geKey(geId()),
 				status(),
-				directoryProperties.heartbeatTtl()
+				redisProperties.heartbeatTtl()
 			);
 			log.debug("ge heartbeat refreshed. geId={}, status={}", geId(), status());
 		});
 	}
 
 	@Scheduled(
-		fixedDelayString = "${kopic.directory.load-interval-ms:5000}",
-		initialDelayString = "${kopic.directory.initial-delay-ms:2000}"
+		fixedDelayString = "${kopic.redis.load-interval:1m}",
+		initialDelayString = "${kopic.redis.initial-delay:2s}"
 	)
 	public void reportLoad() {
 		runStatusUpdate("report-load", () -> {
 			int rooms = roomCount.get();
 			int participants = participantCount.get();
-			double loadScore = participants + rooms * directoryProperties.roomWeight();
-			redisService.zAdd(directoryProperties.keys().geLoad(), geId(), loadScore);
+			double loadScore = participants + rooms * redisProperties.roomWeight();
+			redisService.zAdd(redisProperties.keys().geLoad(), geId(), loadScore);
 			log.debug("ge load refreshed. geId={}, roomCount={}, participantCount={}, score={}",
 				geId(), rooms, participants, loadScore);
 		});
@@ -79,16 +79,16 @@ public class GeStateRecorder {
 
 	@PreDestroy
 	public void markDraining() {
-		if (!directoryProperties.enabled()) {
+		if (!redisProperties.enabled()) {
 			return;
 		}
 		try {
 			redisService.set(
-				directoryProperties.geKey(geId()),
+				redisProperties.geKey(geId()),
 				DRAINING,
-				directoryProperties.heartbeatTtl()
+				redisProperties.heartbeatTtl()
 			);
-			redisService.zRemove(directoryProperties.keys().geLoad(), geId());
+			redisService.zRemove(redisProperties.keys().geLoad(), geId());
 			log.info("ge marked as draining. geId={}", geId());
 		} catch (RuntimeException runtimeException) {
 			log.debug("ge draining marker skipped. geId={}, error={}", geId(), runtimeException.getMessage());
@@ -96,7 +96,7 @@ public class GeStateRecorder {
 	}
 
 	private void runStatusUpdate(String action, Runnable update) {
-		if (!directoryProperties.enabled()) {
+		if (!redisProperties.enabled()) {
 			return;
 		}
 		try {
@@ -115,7 +115,7 @@ public class GeStateRecorder {
 	}
 
 	private String status() {
-		return directoryProperties.status();
+		return redisProperties.status();
 	}
 
 	private String geId() {

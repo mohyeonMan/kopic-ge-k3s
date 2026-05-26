@@ -1,6 +1,6 @@
 package io.jhpark.kopic.ge.room.registry;
 
-import io.jhpark.kopic.ge.common.config.DirectoryProperties;
+import io.jhpark.kopic.ge.common.config.KopicRedisProperties;
 import io.jhpark.kopic.ge.common.config.NodeProperties;
 import io.jhpark.kopic.ge.common.redis.RedisService;
 import io.jhpark.kopic.ge.room.dto.Room;
@@ -35,7 +35,7 @@ public final class DefaultQuickRoomCandidateStore {
 	private final Object lock = new Object();
 	private final RoomSessionStore sessionStore;
 	private final RedisService redisService;
-	private final DirectoryProperties directoryProperties;
+	private final KopicRedisProperties redisProperties;
 	private final NodeProperties nodeProperties;
 
 	public Optional<String> findFirstAvailableRoomId() {
@@ -135,11 +135,11 @@ public final class DefaultQuickRoomCandidateStore {
 	}
 
 	@Scheduled(
-		fixedDelayString = "${kopic.directory.reconciliation-interval-ms:3600000}",
-		initialDelayString = "${kopic.directory.initial-delay-ms:2000}"
+		fixedDelayString = "${kopic.redis.reconciliation-interval:1h}",
+		initialDelayString = "${kopic.redis.initial-delay:2s}"
 	)
 	public void cleanupStaleRedisAvailability() {
-		if (!directoryProperties.enabled()) {
+		if (!redisProperties.enabled()) {
 			return;
 		}
 		try {
@@ -154,14 +154,14 @@ public final class DefaultQuickRoomCandidateStore {
 
 	@PreDestroy
 	public void clearQuickAvailabilityOnShutdown() {
-		if (!directoryProperties.enabled()) {
+		if (!redisProperties.enabled()) {
 			return;
 		}
 		try {
 			removeQuickAvailabilityForCurrentGe();
 			log.info("quick availability cleared for current ge. geId={}", geId());
 		} catch (RuntimeException runtimeException) {
-			log.debug("quick availability cleanup skipped. geId={}, error={}", geId(), runtimeException.getMessage());
+			log.info("quick availability cleanup skipped. geId={}, error={}", geId(), runtimeException.getMessage());
 		}
 	}
 
@@ -193,22 +193,22 @@ public final class DefaultQuickRoomCandidateStore {
 	}
 
 	private void addRedisQuickAvailability(Room room) {
-		if (!directoryProperties.enabled() || room == null || isBlank(room.getRoomId())) {
+		if (!redisProperties.enabled() || room == null || isBlank(room.getRoomId())) {
 			return;
 		}
 		String roomId = room.getRoomId();
 		try {
 			if (!isActive()) {
-				redisService.zRemove(directoryProperties.keys().quickAvailable(), quickMember(roomId));
+				redisService.zRemove(redisProperties.keys().quickAvailable(), quickMember(roomId));
 				return;
 			}
 			if (room.getRoomType() != Room.QUICK_ROOM_TYPE || !hasCapacity(room)) {
-				redisService.zRemove(directoryProperties.keys().quickAvailable(), quickMember(roomId));
+				redisService.zRemove(redisProperties.keys().quickAvailable(), quickMember(roomId));
 				log.debug("quick availability add skipped. geId={}, roomId={}", geId(), roomId);
 				return;
 			}
 			double score = quickAvailabilityScore();
-			redisService.zAdd(directoryProperties.keys().quickAvailable(), quickMember(roomId), score);
+			redisService.zAdd(redisProperties.keys().quickAvailable(), quickMember(roomId), score);
 			log.debug("quick availability added. geId={}, roomId={}, score={}", geId(), roomId, score);
 		} catch (RuntimeException runtimeException) {
 			log.warn("quick availability add failed. geId={}, roomId={}, error={}",
@@ -218,11 +218,11 @@ public final class DefaultQuickRoomCandidateStore {
 	}
 
 	private void removeRedisQuickAvailability(String roomId) {
-		if (!directoryProperties.enabled() || isBlank(roomId)) {
+		if (!redisProperties.enabled() || isBlank(roomId)) {
 			return;
 		}
 		try {
-			redisService.zRemove(directoryProperties.keys().quickAvailable(), quickMember(roomId));
+			redisService.zRemove(redisProperties.keys().quickAvailable(), quickMember(roomId));
 			log.debug("quick availability removed. geId={}, roomId={}", geId(), roomId);
 		} catch (RuntimeException runtimeException) {
 			log.warn("quick availability remove failed. geId={}, roomId={}, error={}",
@@ -233,7 +233,7 @@ public final class DefaultQuickRoomCandidateStore {
 
 	private int removeStaleRedisAvailabilityForCurrentGe() {
 		String prefix = geId() + ":";
-		Set<String> members = redisService.zRange(directoryProperties.keys().quickAvailable(), 0, -1);
+		Set<String> members = redisService.zRange(redisProperties.keys().quickAvailable(), 0, -1);
 		if (members == null || members.isEmpty()) {
 			return 0;
 		}
@@ -245,7 +245,7 @@ public final class DefaultQuickRoomCandidateStore {
 			}
 			String roomId = member.substring(prefix.length());
 			if (isStaleRedisAvailability(roomId)) {
-				redisService.zRemove(directoryProperties.keys().quickAvailable(), member);
+				redisService.zRemove(redisProperties.keys().quickAvailable(), member);
 				removedCount += 1;
 			}
 		}
@@ -254,13 +254,13 @@ public final class DefaultQuickRoomCandidateStore {
 
 	private void removeQuickAvailabilityForCurrentGe() {
 		String prefix = geId() + ":";
-		Set<String> members = redisService.zRange(directoryProperties.keys().quickAvailable(), 0, -1);
+		Set<String> members = redisService.zRange(redisProperties.keys().quickAvailable(), 0, -1);
 		if (members == null || members.isEmpty()) {
 			return;
 		}
 		for (String member : members) {
 			if (member != null && member.startsWith(prefix)) {
-				redisService.zRemove(directoryProperties.keys().quickAvailable(), member);
+				redisService.zRemove(redisProperties.keys().quickAvailable(), member);
 			}
 		}
 	}
@@ -297,7 +297,7 @@ public final class DefaultQuickRoomCandidateStore {
 	}
 
 	private boolean isActive() {
-		return ACTIVE.equalsIgnoreCase(directoryProperties.status());
+		return ACTIVE.equalsIgnoreCase(redisProperties.status());
 	}
 
 	private String quickMember(String roomId) {

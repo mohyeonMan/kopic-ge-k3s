@@ -3,28 +3,28 @@ package io.jhpark.kopic.ge.common.config;
 import java.time.Duration;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
-@ConfigurationProperties(prefix = "kopic.directory")
-public record DirectoryProperties(
+@ConfigurationProperties(prefix = "kopic.redis")
+public record KopicRedisProperties(
 	boolean enabled,
 	String status,
 	Duration heartbeatTtl,
 	Duration roomCodeTtl,
-	long heartbeatIntervalMs,
-	long loadIntervalMs,
-	long reconciliationIntervalMs,
-	long initialDelayMs,
+	Duration heartbeatInterval,
+	Duration loadInterval,
+	Duration reconciliationInterval,
+	Duration initialDelay,
 	double roomWeight,
 	Keys keys
 ) {
 
-	public DirectoryProperties {
+	public KopicRedisProperties {
 		status = normalize(status, "ACTIVE");
 		heartbeatTtl = heartbeatTtl == null ? Duration.ofSeconds(15) : heartbeatTtl;
 		roomCodeTtl = roomCodeTtl == null ? Duration.ofHours(6) : roomCodeTtl;
-		heartbeatIntervalMs = heartbeatIntervalMs <= 0 ? 5000 : heartbeatIntervalMs;
-		loadIntervalMs = loadIntervalMs <= 0 ? 60000 : loadIntervalMs;
-		reconciliationIntervalMs = reconciliationIntervalMs <= 0 ? 3600000 : reconciliationIntervalMs;
-		initialDelayMs = Math.max(0, initialDelayMs);
+		heartbeatInterval = normalize(heartbeatInterval, Duration.ofSeconds(10));
+		loadInterval = normalize(loadInterval, Duration.ofMinutes(1));
+		reconciliationInterval = normalize(reconciliationInterval, Duration.ofHours(1));
+		initialDelay = initialDelay == null || initialDelay.isNegative() ? Duration.ZERO : initialDelay;
 		roomWeight = roomWeight <= 0 ? 2.0 : roomWeight;
 		keys = keys == null ? new Keys(null, null, null, null) : keys;
 	}
@@ -39,6 +39,10 @@ public record DirectoryProperties(
 
 	private static String normalize(String value, String defaultValue) {
 		return value == null || value.isBlank() ? defaultValue : value.trim();
+	}
+
+	private static Duration normalize(Duration value, Duration defaultValue) {
+		return value == null || value.isZero() || value.isNegative() ? defaultValue : value;
 	}
 
 	public record Keys(

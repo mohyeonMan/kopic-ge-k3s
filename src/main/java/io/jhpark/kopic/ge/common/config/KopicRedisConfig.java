@@ -4,6 +4,6 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Configuration;
 
 @Configuration
-@EnableConfigurationProperties(DirectoryProperties.class)
-public class DirectoryConfig {
+@EnableConfigurationProperties(KopicRedisProperties.class)
+public class KopicRedisConfig {
 }

@@ -84,8 +84,8 @@ public class DefaultRoomSessionStore implements RoomSessionStore {
 	}
 
 	@Scheduled(
-		fixedDelayString = "${kopic.directory.reconciliation-interval-ms:3600000}",
-		initialDelayString = "${kopic.directory.initial-delay-ms:2000}"
+		fixedDelayString = "${kopic.redis.reconciliation-interval:1h}",
+		initialDelayString = "${kopic.redis.initial-delay:2s}"
 	)
 	public void reconcileDirectory() {
 		List<Room> rooms = snapshotRooms();

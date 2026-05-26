@@ -1,6 +1,6 @@
 package io.jhpark.kopic.ge.room.registry;
 
-import io.jhpark.kopic.ge.common.config.DirectoryProperties;
+import io.jhpark.kopic.ge.common.config.KopicRedisProperties;
 import io.jhpark.kopic.ge.common.config.NodeProperties;
 import io.jhpark.kopic.ge.common.redis.RedisService;
 import io.jhpark.kopic.ge.room.dto.Room;
@@ -21,7 +21,7 @@ public final class DefaultPrivateRoomCodeStore {
 	private final Map<String, String> roomCodeToRoomId = new ConcurrentHashMap<>();
 	private final Map<String, String> roomIdToRoomCode = new ConcurrentHashMap<>();
 	private final RedisService redisService;
-	private final DirectoryProperties directoryProperties;
+	private final KopicRedisProperties redisProperties;
 	private final NodeProperties nodeProperties;
 
 	Optional<String> findRoomId(String roomCode, Predicate<String> roomExists) {
@@ -83,7 +83,7 @@ public final class DefaultPrivateRoomCodeStore {
 	}
 
 	void refresh(List<Room> rooms) {
-		if (!directoryProperties.enabled()) {
+		if (!redisProperties.enabled()) {
 			return;
 		}
 		try {
@@ -111,15 +111,15 @@ public final class DefaultPrivateRoomCodeStore {
 	}
 
 	private boolean addRedisPrivateRoomCode(String roomId, String roomCode) {
-		if (!directoryProperties.enabled()) {
+		if (!redisProperties.enabled()) {
 			return true;
 		}
 		if (isBlank(roomId) || isBlank(roomCode)) {
 			return false;
 		}
-		String key = directoryProperties.roomCodeKey(roomCode);
+		String key = redisProperties.roomCodeKey(roomCode);
 		try {
-			Boolean reserved = redisService.setIfAbsent(key, geId(), directoryProperties.roomCodeTtl());
+			Boolean reserved = redisService.setIfAbsent(key, geId(), redisProperties.roomCodeTtl());
 			if (Boolean.TRUE.equals(reserved)) {
 				log.debug("private roomCode added to redis. roomCode={}, roomId={}, geId={}",
 					roomCode, roomId, geId());
@@ -128,7 +128,7 @@ public final class DefaultPrivateRoomCodeStore {
 
 			String existingGeId = redisService.get(key);
 			if (geId().equals(existingGeId)) {
-				redisService.set(key, geId(), directoryProperties.roomCodeTtl());
+				redisService.set(key, geId(), redisProperties.roomCodeTtl());
 				log.debug("private roomCode redis ttl refreshed. roomCode={}, roomId={}, geId={}",
 					roomCode, roomId, geId());
 				return true;
@@ -153,11 +153,11 @@ public final class DefaultPrivateRoomCodeStore {
 	}
 
 	private void removeRedisPrivateRoomCode(String roomCode) {
-		if (!directoryProperties.enabled() || isBlank(roomCode)) {
+		if (!redisProperties.enabled() || isBlank(roomCode)) {
 			return;
 		}
 		try {
-			redisService.delete(directoryProperties.roomCodeKey(roomCode));
+			redisService.delete(redisProperties.roomCodeKey(roomCode));
 			log.debug("private roomCode removed from redis. roomCode={}, geId={}", roomCode, geId());
 		} catch (RuntimeException runtimeException) {
 			log.warn("private roomCode remove failed. roomCode={}, geId={}, error={}",
@@ -168,7 +168,7 @@ public final class DefaultPrivateRoomCodeStore {
 	}
 
 	private void refreshRedisPrivateRoomCode(Room room) {
-		String key = directoryProperties.roomCodeKey(room.getRoomCode());
+		String key = redisProperties.roomCodeKey(room.getRoomCode());
 		String existingGeId = redisService.get(key);
 		if (!isBlank(existingGeId) && !geId().equals(existingGeId)) {
 			log.warn(
@@ -179,7 +179,7 @@ public final class DefaultPrivateRoomCodeStore {
 			);
 			return;
 		}
-		redisService.set(key, geId(), directoryProperties.roomCodeTtl());
+		redisService.set(key, geId(), redisProperties.roomCodeTtl());
 	}
 
 	private String geId() {

@@ -21,21 +21,21 @@ management:
 
 kopic:
   node-id: ${KOPIC_NODE_ID:ge-local}
-  directory:
-    enabled: ${KOPIC_DIRECTORY_ENABLED:true}
-    status: ${KOPIC_DIRECTORY_STATUS:ACTIVE}
-    heartbeat-ttl: ${KOPIC_DIRECTORY_HEARTBEAT_TTL:15s}
-    room-code-ttl: ${KOPIC_DIRECTORY_ROOM_CODE_TTL:6h}
-    heartbeat-interval-ms: ${KOPIC_DIRECTORY_HEARTBEAT_INTERVAL_MS:5000}
-    load-interval-ms: ${KOPIC_DIRECTORY_LOAD_INTERVAL_MS:60000}
-    reconciliation-interval-ms: ${KOPIC_DIRECTORY_RECONCILIATION_INTERVAL_MS:3600000}
-    initial-delay-ms: ${KOPIC_DIRECTORY_INITIAL_DELAY_MS:2000}
-    room-weight: ${KOPIC_DIRECTORY_ROOM_WEIGHT:2.0}
+  redis:
+    enabled: ${KOPIC_REDIS_ENABLED:true}
+    status: ${KOPIC_REDIS_STATUS:ACTIVE}
+    heartbeat-ttl: ${KOPIC_REDIS_HEARTBEAT_TTL:15s}
+    room-code-ttl: ${KOPIC_REDIS_ROOM_CODE_TTL:6h}
+    heartbeat-interval: ${KOPIC_REDIS_HEARTBEAT_INTERVAL:10s}
+    load-interval: ${KOPIC_REDIS_LOAD_INTERVAL:1m}
+    reconciliation-interval: ${KOPIC_REDIS_RECONCILIATION_INTERVAL:1h}
+    initial-delay: ${KOPIC_REDIS_INITIAL_DELAY:2s}
+    room-weight: ${KOPIC_REDIS_ROOM_WEIGHT:2.0}
     keys:
-      ge-prefix: ${KOPIC_DIRECTORY_KEY_GE_PREFIX:ge:}
-      ge-load: ${KOPIC_DIRECTORY_KEY_GE_LOAD:ge:load}
-      quick-available: ${KOPIC_DIRECTORY_KEY_QUICK_AVAILABLE:quick:available}
-      room-code-prefix: ${KOPIC_DIRECTORY_KEY_ROOM_CODE_PREFIX:roomcode:}
+      ge-prefix: ${KOPIC_REDIS_KEY_GE_PREFIX:ge:}
+      ge-load: ${KOPIC_REDIS_KEY_GE_LOAD:ge:load}
+      quick-available: ${KOPIC_REDIS_KEY_QUICK_AVAILABLE:quick:available}
+      room-code-prefix: ${KOPIC_REDIS_KEY_ROOM_CODE_PREFIX:roomcode:}
   game-timer:
     close-if-empty: ${KOPIC_GAME_TIMER_CLOSE_IF_EMPTY:30s}
     start-round: ${KOPIC_GAME_TIMER_START_ROUND:3s}
