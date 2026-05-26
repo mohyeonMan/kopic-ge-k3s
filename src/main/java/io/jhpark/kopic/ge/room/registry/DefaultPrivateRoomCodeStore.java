@@ -72,9 +72,11 @@ public final class DefaultPrivateRoomCodeStore {
 		return true;
 	}
 
-	void add(String roomId, String roomCode) {
-		indexIfAbsent(roomId, roomCode);
-		addRedisPrivateRoomCode(roomId, roomCode);
+	boolean add(String roomId, String roomCode) {
+		if (!addRedisPrivateRoomCode(roomId, roomCode)) {
+			return false;
+		}
+		return indexIfAbsent(roomId, roomCode);
 	}
 
 	void remove(String roomId, String roomCode) {

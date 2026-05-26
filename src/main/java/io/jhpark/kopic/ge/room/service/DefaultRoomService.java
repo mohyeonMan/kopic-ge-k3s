@@ -1,10 +1,10 @@
 package io.jhpark.kopic.ge.room.service;
 
 import io.jhpark.kopic.ge.common.error.ErrorCode;
-import io.jhpark.kopic.ge.room.directory.GeStateRecorder;
 import io.jhpark.kopic.ge.room.dto.Room;
 import io.jhpark.kopic.ge.room.dto.RoomSession;
 import io.jhpark.kopic.ge.room.registry.DefaultQuickRoomCandidateStore;
+import io.jhpark.kopic.ge.room.registry.GeStateRecorder;
 import io.jhpark.kopic.ge.room.registry.RoomSessionStore;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
@@ -42,7 +42,7 @@ public class DefaultRoomService implements RoomService {
 	private Room bootstrapPrivateRoom(String hostSessionId) {
 		for (int retry = 0; retry < PRIVATE_ROOM_CODE_MAX_RETRY; retry++) {
 			Room room = new Room(Room.PRIVATE_ROOM_TYPE, hostSessionId);
-			if (!isGeneratedPrivateRoomAvailable(room)) {
+			if (sessionStore.find(room.getRoomId()).isPresent()) {
 				continue;
 			}
 			try {
@@ -180,11 +180,6 @@ public class DefaultRoomService implements RoomService {
 	@Override
 	public RoomSubmitResult explicitWordChoice(String roomId, String sessionId, int choiceIndex) {
 		return submit(roomId, roomJobFactory.explicitWordChoice(sessionId, choiceIndex));
-	}
-
-	private boolean isGeneratedPrivateRoomAvailable(Room room) {
-		return sessionStore.findRoomIdByPrivateCode(room.getRoomCode()).isEmpty()
-			&& sessionStore.find(room.getRoomId()).isEmpty();
 	}
 
 	private boolean isBlank(String value) {

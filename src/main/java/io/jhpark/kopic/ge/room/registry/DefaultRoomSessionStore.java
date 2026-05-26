@@ -1,6 +1,5 @@
 package io.jhpark.kopic.ge.room.registry;
 
-import io.jhpark.kopic.ge.room.directory.GeStateRecorder;
 import io.jhpark.kopic.ge.room.dto.Room;
 import io.jhpark.kopic.ge.room.dto.RoomSession;
 import java.util.ArrayList;
@@ -37,8 +36,12 @@ public class DefaultRoomSessionStore implements RoomSessionStore {
 		Room room = session.getRoom();
 		String roomId = room.getRoomId();
 		sessions.put(roomId, session);
-
-		addIndexesAndDirectory(room);
+		try {
+			reservePrivateRoomCodeAndIndex(room);
+		} catch (RuntimeException runtimeException) {
+			sessions.remove(roomId, session);
+			throw runtimeException;
+		}
 	}
 
 	@Override
@@ -115,9 +118,11 @@ public class DefaultRoomSessionStore implements RoomSessionStore {
 		}
 	}
 
-	private void addIndexesAndDirectory(Room room) {
+	private void reservePrivateRoomCodeAndIndex(Room room) {
 		if (room.getRoomType() == Room.PRIVATE_ROOM_TYPE) {
-			privateRoomCodes.add(room.getRoomId(), room.getRoomCode());
+			if (!privateRoomCodes.add(room.getRoomId(), room.getRoomCode())) {
+				throw new IllegalStateException("failed to reserve private roomCode");
+			}
 		}
 	}
 

@@ -1,4 +1,4 @@
-package io.jhpark.kopic.ge.room.directory;
+package io.jhpark.kopic.ge.room.registry;
 
 import io.jhpark.kopic.ge.common.config.KopicRedisProperties;
 import io.jhpark.kopic.ge.common.config.NodeProperties;

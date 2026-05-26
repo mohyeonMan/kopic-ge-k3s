@@ -7,7 +7,6 @@ import io.jhpark.kopic.ge.common.metrics.GeMetrics;
 import io.jhpark.kopic.ge.common.util.CommonMapper;
 import io.jhpark.kopic.ge.common.util.TimeFormatUtil;
 import io.jhpark.kopic.ge.outbound.dto.GeEvent;
-import io.jhpark.kopic.ge.room.directory.GeStateRecorder;
 import io.jhpark.kopic.ge.room.dto.CustomWordMode;
 import io.jhpark.kopic.ge.room.dto.DrawerOrderMode;
 import io.jhpark.kopic.ge.room.dto.EndMode;
@@ -19,6 +18,7 @@ import io.jhpark.kopic.ge.room.dto.WordEntry;
 import io.jhpark.kopic.ge.room.dto.Game.GamePhase;
 import io.jhpark.kopic.ge.room.dto.Game.RoundPhase;
 import io.jhpark.kopic.ge.room.dto.Game.TurnPhase;
+import io.jhpark.kopic.ge.room.registry.GeStateRecorder;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import java.time.Duration;

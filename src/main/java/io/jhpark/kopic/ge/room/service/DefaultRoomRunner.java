@@ -2,10 +2,10 @@ package io.jhpark.kopic.ge.room.service;
 
 import io.jhpark.kopic.ge.common.error.ErrorCode;
 import io.jhpark.kopic.ge.common.metrics.GeMetrics;
-import io.jhpark.kopic.ge.room.directory.GeStateRecorder;
 import io.jhpark.kopic.ge.room.dto.Room;
 import io.jhpark.kopic.ge.room.dto.RoomSession;
 import io.jhpark.kopic.ge.room.registry.DefaultQuickRoomCandidateStore;
+import io.jhpark.kopic.ge.room.registry.GeStateRecorder;
 import io.jhpark.kopic.ge.room.registry.RoomSessionStore;
 import java.time.Instant;
 import java.util.concurrent.Executor;
