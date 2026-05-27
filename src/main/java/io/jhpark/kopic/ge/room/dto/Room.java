@@ -13,12 +13,13 @@ import lombok.Getter;
 @Getter
 public final class Room {
 
-	public static final int DEFAULT_ROOM_CAPACITY = 8;
+	public static final int QUICK_ROOM_CAPACITY = 5;
+	public static final int PRIVATE_ROOM_CAPACITY = 50;
 	public static final String ROOM_ID_PREFIX = "rid_";
 	public static final int QUICK_ROOM_TYPE = 0;
 	public static final int PRIVATE_ROOM_TYPE = 1;
 	private static final int ROOM_ID_SUFFIX_LENGTH = 8;
-	private static final int ROOM_CODE_SUFFIX_LENGTH = 6;
+	private static final int ROOM_CODE_SUFFIX_LENGTH = 8;
 
 	private final String roomId;
 	private final String roomCode;
@@ -36,7 +37,7 @@ public final class Room {
 		this.roomId = newRoomId();
 		this.roomCode = roomType == PRIVATE_ROOM_TYPE ? newRoomCode() : null;
 		this.roomType = roomType;
-		this.capacity = Room.DEFAULT_ROOM_CAPACITY;
+		this.capacity = roomType == PRIVATE_ROOM_TYPE ? Room.PRIVATE_ROOM_CAPACITY : Room.QUICK_ROOM_CAPACITY;
 		this.createdAt = Instant.now();
 		this.hostSessionId = hostSessionId;
 		this.setting = roomType == PRIVATE_ROOM_TYPE ? Setting.privateDefaultValue() : Setting.publicDefaultValue();
