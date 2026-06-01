@@ -128,10 +128,6 @@ public final class DefaultRoomRunner implements RoomRunner {
 		}
 		String roomId = session.getRoom().getRoomId();
 		switch (action) {
-			case REQUEST_CLOSE_IF_EMPTY -> {
-				closeActor(session);
-				return true;
-			}
 			case REQUEST_CLOSE -> {
 				closeActor(session);
 				return true;

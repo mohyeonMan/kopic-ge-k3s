@@ -365,7 +365,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 							room.getRoomId(), room.getParticipants().size());
 						return RoomJob.FollowUpResult.none();
 					}
-					return RoomJob.FollowUpResult.requestCloseIfEmpty();
+					return RoomJob.FollowUpResult.requestClose();
 				});
 	}
 

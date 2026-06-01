@@ -39,25 +39,45 @@ public class GeDrainService implements SmartLifecycle {
 		try {
 			log.info("ge drain lifecycle stop started. phase={}, geId={}, status={}",
 				getPhase(), runtimeState.geId(), runtimeState.statusValue());
+
+			// GE 상태를 drain으로 전환 시도. 이미 drain 상태이거나, shutdown 상태인 경우에는 전환하지 않음.
 			boolean transitioned = runtimeState.enterDrain();
+
 			log.info("ge drain lifecycle entered drain. geId={}, transitioned={}, status={}",
 				runtimeState.geId(), transitioned, runtimeState.statusValue());
+			
+			// DRAIN 으로 변환한 후 하트비트 상태 갱신
 			stateRecorder.heartbeat();
+			// DRAIN 으로 변환한 후 ge 딕셔너리 에서 삭제
 			stateRecorder.reportLoad();
+			// DRAIN 으로 변환한 후 Quickjoin 딕셔너리에서 삭제.
 			quickRoomCandidates.clearCurrentGeCandidates();
+
+			// 모든 방들에 DRAIN 안내 전파.
 			int submittedCount = roomService.startDrain();
+
+
 			log.info("ge drain room jobs submitted. geId={}, submittedCount={}, roomCount={}",
 				runtimeState.geId(), submittedCount, runtimeState.roomCount());
+
+			// timeout동안 방들의 능동적정리 대기.
 			boolean drained = waitForRoomsToDrain(drainProperties.timeout(), drainProperties.pollInterval());
+			// 정리되지 않았다면 강제정리.
 			if (!drained) {
 				log.warn("ge drain timeout reached. geId={}, roomCount={}",
 					runtimeState.geId(), runtimeState.roomCount());
+
+				//모든 방을 강제정리.
 				int forceCloseSubmittedCount = roomService.forceCloseAll("서버 종료 시간이 도달하여 로비로 이동합니다.");
 				log.warn("ge drain force close submitted. geId={}, submittedCount={}",
 					runtimeState.geId(), forceCloseSubmittedCount);
+				//강제정리 대기
 				waitForRoomsToDrain(FORCE_CLOSE_WAIT, FORCE_CLOSE_POLL_INTERVAL);
 			}
+
+			// 상태 갱신 중단.
 			stateRecorder.stopRecording();
+			// drain 종료 플래그.
 			running.set(false);
 			log.info("ge drain lifecycle stop completed. phase={}, geId={}, roomCount={}",
 				getPhase(), runtimeState.geId(), runtimeState.roomCount());

@@ -72,10 +72,6 @@ public record RoomJob(
 			return new FollowUpResult(List.of(), timerKey, FollowUpAction.NONE);
 		}
 
-		public static FollowUpResult requestCloseIfEmpty() {
-			return new FollowUpResult(List.of(), null, FollowUpAction.REQUEST_CLOSE_IF_EMPTY);
-		}
-
 		public static FollowUpResult requestClose() {
 			return new FollowUpResult(List.of(), null, FollowUpAction.REQUEST_CLOSE);
 		}
@@ -83,7 +79,6 @@ public record RoomJob(
 
 	public enum FollowUpAction {
 		NONE,
-		REQUEST_CLOSE_IF_EMPTY,
 		REQUEST_CLOSE,
 		ADD_QUICK_JOIN_CANDIDATE,
 		REMOVE_QUICK_JOIN_CANDIDATE
