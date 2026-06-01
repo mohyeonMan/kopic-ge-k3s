@@ -2,6 +2,7 @@ package io.jhpark.kopic.ge.room.service;
 
 
 import com.fasterxml.jackson.databind.JsonNode;
+import java.time.Duration;
 
 public interface RoomJobFactory {
 
@@ -18,4 +19,12 @@ public interface RoomJobFactory {
 	RoomJob updateSetting(String sessionId, JsonNode settingPayload);
 
 	RoomJob startGame(String sessionId);
+
+	RoomJob notify(String message);
+
+	RoomJob drainAfterNotify(String message, Duration delay, RoomJob nextJob, String timerKey);
+
+	RoomJob startDrain(Duration waitingRoomDeleteDelay);
+
+	RoomJob forceClose(String message);
 }

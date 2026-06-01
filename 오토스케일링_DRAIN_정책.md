@@ -154,10 +154,11 @@ IN_GAME room 처리
 
 1. SERVER_DRAIN_NOTICE 발송
 2. 현재 게임은 계속 진행
-3. 새 라운드 시작 여부는 기존 게임 정책에 따름
-4. 게임 종료 로직에서 현재 GE 상태를 확인
-5. geStatus == DRAIN 이면 방 삭제 및 로비 이동 처리
-6. geStatus == ACTIVE 이면 기존 정상 게임 종료 흐름 수행
+3. 게임이 끝날 때까지 3분마다 SERVER_DRAIN_NOTICE 반복 발송
+4. 새 라운드 시작 여부는 기존 게임 정책에 따름
+5. 게임 종료 로직에서 현재 GE 상태를 확인
+6. geStatus == DRAIN 이면 로비 이동 안내 후 forceClose
+7. geStatus == ACTIVE 이면 기존 정상 게임 종료 흐름 수행
 ```
 
 별도의 `drainAfterGame` 같은 room별 플래그는 사용하지 않는다.
@@ -199,11 +200,10 @@ WAITING / READY / IDLE room 처리
 1. 새 게임 시작 차단
 2. ROOM_DRAIN_DELETE_SCHEDULED 발송
 3. deleteAt = now + 5분 설정
-4. room mailbox에 삭제 스케줄 등록
-5. 5분 뒤 SERVER_DRAIN_FINAL 발송
-6. 방 삭제
-7. 사용자 로비 이동
-8. 필요 시 WS close 요청
+4. 5분, 4분, 3분, 2분, 1분, 10초 전 알림을 RoomJob follow-up으로 예약
+5. 마지막에 로비 이동 안내 발송
+6. forceClose RoomJob으로 방 삭제
+7. 필요 시 WS close 요청
 ```
 
 이 상태의 방에서 절대 허용하면 안 되는 것은 새 게임 시작이다.
@@ -604,8 +604,10 @@ GeDrainService
 - phase = 100000
 - SIGTERM/shutdown 시 가장 먼저 DRAIN 전환
 - GeRuntimeState ACTIVE -> DRAIN
-- ge:{geId} = DRAIN 기록
-- ge:load에서 자기 geId 제거
+- GeStateRecorder.heartbeat() 1회 호출로 ge:{geId} = DRAIN 기록
+- GeStateRecorder.reportLoad() 1회 호출로 ge:load에서 자기 geId 제거
+- quick:available에서 자기 GE 후보 제거
+- 모든 room에 drain RoomJob 발행
 - drain 완료 조건을 기다린 뒤 callback 호출
 
 Rabbit listener container
@@ -623,20 +625,31 @@ server:
 spring:
   lifecycle:
     timeout-per-shutdown-phase: ${KOPIC_SHUTDOWN_PHASE_TIMEOUT:70m}
+
+kopic:
+  drain:
+    timeout: ${KOPIC_DRAIN_TIMEOUT:3600s}
+    poll-interval: ${KOPIC_DRAIN_POLL_INTERVAL:60s}
+    waiting-room-delete-delay: ${KOPIC_DRAIN_WAITING_ROOM_DELETE_DELAY:300s}
+    in-game-notify-interval: ${KOPIC_DRAIN_IN_GAME_NOTIFY_INTERVAL:180s}
 ```
 
-현재 구현 확인 단계에서는 `GeDrainService.stop()` 안에서 10초 대기를 넣어 phase 순서를 검증한다.
-최종 구현에서는 이 대기를 실제 drain 완료 조건으로 교체한다.
+현재 구현은 `GeDrainService.stop()`에서 room을 직접 정리하지 않는다.
+각 room에 drain RoomJob을 발행한 뒤, 최대 3600초 동안 60초 간격으로 roomCount만 감시한다.
 
 ```text
-검증된 순서
+구현된 순서
 
 1. GeDrainService stop 시작
-2. Redis에 DRAIN 기록
-3. drain 대기
-4. GeDrainService callback 호출
-5. Rabbit listener stop 시작
-6. Redis/Rabbit connection 종료
+2. GeRuntimeState ACTIVE -> DRAIN
+3. GeStateRecorder.heartbeat() / reportLoad() 호출
+4. quick 후보 제거
+5. 모든 room에 drain RoomJob 발행
+6. roomCount == 0 또는 drain timeout까지 1분 간격 감시
+7. timeout이면 남은 room에 forceClose RoomJob 발행
+8. GeDrainService callback 호출
+9. Rabbit listener stop 시작
+10. Redis/Rabbit connection 종료
 ```
 
 room 종료 시:

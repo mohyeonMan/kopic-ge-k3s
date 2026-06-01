@@ -132,6 +132,10 @@ public final class DefaultRoomRunner implements RoomRunner {
 				closeActor(session);
 				return true;
 			}
+			case REQUEST_CLOSE -> {
+				closeActor(session);
+				return true;
+			}
 			case ADD_QUICK_JOIN_CANDIDATE -> {
 				quickRoomCandidates.add(roomId);
 				log.debug("quick join candidate added. roomId={}", roomId);

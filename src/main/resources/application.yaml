@@ -39,7 +39,13 @@ kopic:
       ge-prefix: ${KOPIC_REDIS_KEY_GE_PREFIX:ge:}
       ge-load: ${KOPIC_REDIS_KEY_GE_LOAD:ge:load}
       quick-available: ${KOPIC_REDIS_KEY_QUICK_AVAILABLE:quick:available}
+      quick-ge-prefix: ${KOPIC_REDIS_KEY_QUICK_GE_PREFIX:quick:ge:}
       room-code-prefix: ${KOPIC_REDIS_KEY_ROOM_CODE_PREFIX:roomcode:}
+  drain:
+    timeout: ${KOPIC_DRAIN_TIMEOUT:3600s}
+    poll-interval: ${KOPIC_DRAIN_POLL_INTERVAL:60s}
+    waiting-room-delete-delay: ${KOPIC_DRAIN_WAITING_ROOM_DELETE_DELAY:300s}
+    in-game-notify-interval: ${KOPIC_DRAIN_IN_GAME_NOTIFY_INTERVAL:180s}
   game-timer:
     close-if-empty: ${KOPIC_GAME_TIMER_CLOSE_IF_EMPTY:30s}
     start-round: ${KOPIC_GAME_TIMER_START_ROUND:3s}

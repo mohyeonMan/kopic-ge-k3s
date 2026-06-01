@@ -1,5 +1,6 @@
 package io.jhpark.kopic.ge.room.service;
 
+import io.jhpark.kopic.ge.common.config.DrainProperties;
 import io.jhpark.kopic.ge.common.config.GameTimerProperties;
 import io.jhpark.kopic.ge.common.dto.KopicEnvelope;
 import io.jhpark.kopic.ge.common.error.ErrorCode;
@@ -57,8 +58,22 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	private static final String TURN_RESULT_TIMER_KEY = GAME_TIMER_KEY_PREFIX + "turn-result";
 	private static final String GAME_RESULT_TIMER_KEY = GAME_TIMER_KEY_PREFIX + "game-result";
 	private static final String QUICK_RESTART_TIMER_KEY = GAME_TIMER_KEY_PREFIX + "quick-restart";
+	private static final String DRAIN_TIMER_KEY_PREFIX = "drain:";
+	private static final String DRAIN_IN_GAME_NOTIFY_TIMER_KEY = DRAIN_TIMER_KEY_PREFIX + "in-game-notify";
+	private static final String DRAIN_WAITING_ROOM_TIMER_KEY = DRAIN_TIMER_KEY_PREFIX + "waiting-room";
 	private static final String RETURN_TO_LOBBY_REASON_RESULT_END = "RESULT_END";
 	private static final String RETURN_TO_LOBBY_REASON_NOT_ENOUGH_PARTICIPANTS = "NOT_ENOUGH_PARTICIPANTS";
+	private static final String SERVER_DRAIN_NOTICE_TYPE = "SERVER_DRAIN_NOTICE";
+	private static final String ROOM_DRAIN_DELETE_SCHEDULED_TYPE = "ROOM_DRAIN_DELETE_SCHEDULED";
+	private static final String SERVER_DRAIN_FINAL_TYPE = "SERVER_DRAIN_FINAL";
+	private static final String SERVER_DRAIN_FORCE_CLOSE_TYPE = "SERVER_DRAIN_FORCE_CLOSE";
+	private static final int ROOM_NOTICE_EVENT_CODE = 450;
+	private static final int ROOM_DRAIN_DELETE_SCHEDULED_EVENT_CODE = 451;
+	private static final int SERVER_DRAIN_FINAL_EVENT_CODE = 452;
+	private static final int SERVER_DRAIN_FORCE_CLOSE_EVENT_CODE = 453;
+	private static final String IN_GAME_DRAIN_NOTICE_MESSAGE = "이번 게임 이후 방이 종료될 예정입니다.";
+	private static final String GAME_ENDED_DRAIN_CLOSE_MESSAGE = "게임이 종료되어 로비로 이동합니다.";
+	private static final String WAITING_ROOM_DRAIN_CLOSE_MESSAGE = "로비로 이동합니다.";
 	private static final int MIN_COLOR_INDEX = 1;
 	private static final int MAX_COLOR_INDEX = 20;
 
@@ -66,6 +81,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	private final GeEventPublisher geEventPublisher;
 	private final WordPoolProvider wordPoolProvider;
 	private final GameTimerProperties gameTimerProperties;
+	private final DrainProperties drainProperties;
 	private final GeMetrics geMetrics;
 	private final GeRuntimeState runtimeState;
 
@@ -353,6 +369,116 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 				});
 	}
 
+	@Override
+	public RoomJob notify(String message) {
+		return new RoomJob(
+			room -> {
+				broadcastToRoom(room, ROOM_NOTICE_EVENT_CODE, Map.of("msg", message == null ? "" : message));
+				return RoomJob.FollowUpResult.none();
+			}
+		);
+	}
+
+	@Override
+	public RoomJob drainAfterNotify(String message, Duration delay, RoomJob nextJob, String timerKey) {
+		return new RoomJob(
+			room -> {
+				broadcastDrainNotice(room, ROOM_DRAIN_DELETE_SCHEDULED_TYPE, message, delay);
+				return RoomJob.FollowUpResult.followUp(nextJob, delay, timerKey);
+			}
+		);
+	}
+
+	@Override
+	public RoomJob startDrain(Duration waitingRoomDeleteDelay) {
+		return new RoomJob(
+			room -> {
+				if (!runtimeState.isDraining()) {
+					return RoomJob.FollowUpResult.none();
+				}
+				Game game = room.getGame();
+				if (game != null && game.isPlaying()) {
+					return RoomJob.FollowUpResult.followUp(inGameDrainNotify(), null, null);
+				}
+				if (game != null && game.isGameResult()) {
+					return RoomJob.FollowUpResult.followUp(
+						closeWithDrainFinalNotice(GAME_ENDED_DRAIN_CLOSE_MESSAGE),
+						null,
+						null
+					);
+				}
+				if (room.getParticipants().isEmpty()) {
+					return RoomJob.FollowUpResult.followUp(forceClose(WAITING_ROOM_DRAIN_CLOSE_MESSAGE), null, null);
+				}
+				return RoomJob.FollowUpResult.followUp(waitingRoomDrainCountdown(waitingRoomDeleteDelay), null, null);
+			}
+		);
+	}
+
+	@Override
+	public RoomJob forceClose(String message) {
+		return new RoomJob(
+			room -> {
+				broadcastDrainNotice(room, SERVER_DRAIN_FORCE_CLOSE_TYPE, message, null);
+				return RoomJob.FollowUpResult.requestClose();
+			}
+		);
+	}
+
+	private RoomJob inGameDrainNotify() {
+		return new RoomJob(
+			room -> {
+				if (!runtimeState.isDraining()) {
+					return RoomJob.FollowUpResult.none();
+				}
+				Game game = room.getGame();
+				if (game == null) {
+					return RoomJob.FollowUpResult.followUp(
+						closeWithDrainFinalNotice(GAME_ENDED_DRAIN_CLOSE_MESSAGE),
+						null,
+						null
+					);
+				}
+				if (game.isGameResult()) {
+					return RoomJob.FollowUpResult.none();
+				}
+				broadcastDrainNotice(room, SERVER_DRAIN_NOTICE_TYPE, IN_GAME_DRAIN_NOTICE_MESSAGE, null);
+				return RoomJob.FollowUpResult.followUp(
+					inGameDrainNotify(),
+					drainProperties.inGameNotifyInterval(),
+					DRAIN_IN_GAME_NOTIFY_TIMER_KEY
+				);
+			}
+		);
+	}
+
+	private RoomJob waitingRoomDrainCountdown(Duration remaining) {
+		Duration normalizedRemaining = normalizeDrainDelay(remaining);
+		if (normalizedRemaining.isZero()) {
+			return forceClose(WAITING_ROOM_DRAIN_CLOSE_MESSAGE);
+		}
+		Duration nextDelay = nextWaitingRoomDrainDelay(normalizedRemaining);
+		Duration nextRemaining = normalizedRemaining.minus(nextDelay);
+		RoomJob nextJob = nextRemaining.isZero()
+			? forceClose(WAITING_ROOM_DRAIN_CLOSE_MESSAGE)
+			: waitingRoomDrainCountdown(nextRemaining);
+		return drainAfterNotify(
+			waitingRoomDeleteMessage(normalizedRemaining),
+			nextDelay,
+			nextJob,
+			DRAIN_WAITING_ROOM_TIMER_KEY
+		);
+	}
+
+	private RoomJob closeWithDrainFinalNotice(String message) {
+		return new RoomJob(
+			room -> {
+				broadcastDrainNotice(room, SERVER_DRAIN_FINAL_TYPE, message, null);
+				return RoomJob.FollowUpResult.requestClose();
+			}
+		);
+	}
+
 	/**
 	 * 게임 시작 요청을 처리한다.
 	 * 요청자가 방장인지와 최소 인원 조건(2명 이상)을 검증한 뒤
@@ -368,6 +494,20 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 				boolean hadAutoRestartDeadline = room.getAutoRestartAt() != null;
 				Participant requestedParticipant = resolveParticipant(room, sessionId);
 				if (!isQuickRoom && requestedParticipant == null) {
+					return RoomJob.FollowUpResult.none();
+				}
+				if (runtimeState.isDraining()) {
+					if (hadAutoRestartDeadline) {
+						room.clearAutoRestartAt();
+					}
+					if (requestedParticipant != null) {
+						sendErrorToParticipant(
+							requestedParticipant,
+							ErrorCode.FORBIDDEN,
+							"서버 종료 준비 중이라 새 게임을 시작할 수 없습니다."
+						);
+					}
+					broadcastDrainNotice(room, ROOM_DRAIN_DELETE_SCHEDULED_TYPE, "서버 종료 준비 중이라 새 게임을 시작할 수 없습니다.", null);
 					return RoomJob.FollowUpResult.none();
 				}
 
@@ -988,7 +1128,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 				Game game = room.getGame();
 
 				String gameId = game.getGameId();
-				boolean quickRestart = shouldAutoRestartQuickGame(room);
+				boolean quickRestart = !runtimeState.isDraining() && shouldAutoRestartQuickGame(room);
 				clearGameAndBroadcastReturnToLobby(
 					room,
 					gameId,
@@ -1003,6 +1143,13 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 					quickRestart,
 					quickRestart ? gameTimerProperties.quickRestart().toSeconds() : 0
 				);
+				if (runtimeState.isDraining()) {
+					return RoomJob.FollowUpResult.followUp(
+						closeWithDrainFinalNotice(GAME_ENDED_DRAIN_CLOSE_MESSAGE),
+						null,
+						null
+					);
+				}
 				if (!quickRestart) {
 					return RoomJob.FollowUpResult.none();
 				}
@@ -1749,6 +1896,32 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 		return value == null || value.isBlank();
 	}
 
+	private Duration normalizeDrainDelay(Duration value) {
+		if (value == null || value.isNegative() || value.isZero()) {
+			return Duration.ZERO;
+		}
+		return value;
+	}
+
+	private Duration nextWaitingRoomDrainDelay(Duration remaining) {
+		long seconds = Math.max(0, remaining.toSeconds());
+		if (seconds > 60) {
+			return Duration.ofSeconds(Math.min(60, seconds - 60));
+		}
+		if (seconds > 10) {
+			return Duration.ofSeconds(seconds - 10);
+		}
+		return Duration.ofSeconds(seconds);
+	}
+
+	private String waitingRoomDeleteMessage(Duration remaining) {
+		long seconds = Math.max(0, remaining.toSeconds());
+		if (seconds >= 60 && seconds % 60 == 0) {
+			return seconds / 60 + "분 후 방이 삭제될 예정입니다.";
+		}
+		return seconds + "초 후 방이 삭제될 예정입니다.";
+	}
+
 	/**
 	 * 정답 비교를 위한 텍스트 정규화를 수행한다.
 	 * trim + 소문자 변환으로 비교 노이즈를 줄인다.
@@ -1862,6 +2035,42 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 		} catch (RuntimeException runtimeException) {
 			log.warn("failed to parse joinedAt for host selection. joinedAt={}", joinedAt, runtimeException);
 			return Instant.MAX;
+		}
+	}
+
+	private void broadcastDrainNotice(Room room, String type, String message, Duration delay) {
+		if (room == null || room.getParticipants().isEmpty()) {
+			return;
+		}
+		Map<String, Object> payload = new LinkedHashMap<>();
+		payload.put("type", type);
+		payload.put("rid", room.getRoomId());
+		payload.put("msg", message == null ? "" : message);
+		if (delay != null && !delay.isNegative() && !delay.isZero()) {
+			payload.put("sec", delay.toSeconds());
+		}
+		broadcastToRoom(room, drainEventCode(type), payload);
+	}
+
+	private int drainEventCode(String type) {
+		if (ROOM_DRAIN_DELETE_SCHEDULED_TYPE.equals(type)) {
+			return ROOM_DRAIN_DELETE_SCHEDULED_EVENT_CODE;
+		}
+		if (SERVER_DRAIN_FINAL_TYPE.equals(type)) {
+			return SERVER_DRAIN_FINAL_EVENT_CODE;
+		}
+		if (SERVER_DRAIN_FORCE_CLOSE_TYPE.equals(type)) {
+			return SERVER_DRAIN_FORCE_CLOSE_EVENT_CODE;
+		}
+		return ROOM_NOTICE_EVENT_CODE;
+	}
+
+	private void broadcastToRoom(Room room, int eventCode, Object payload) {
+		if (room == null || room.getParticipants().isEmpty()) {
+			return;
+		}
+		for (Participant participant : room.getParticipants().values()) {
+			sendToParticipant(participant, eventCode, payload);
 		}
 	}
 

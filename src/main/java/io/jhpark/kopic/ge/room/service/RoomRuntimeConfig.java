@@ -1,5 +1,6 @@
 package io.jhpark.kopic.ge.room.service;
 
+import io.jhpark.kopic.ge.common.config.DrainProperties;
 import io.jhpark.kopic.ge.common.config.GameTimerProperties;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -9,7 +10,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 @Configuration
-@EnableConfigurationProperties(GameTimerProperties.class)
+@EnableConfigurationProperties({GameTimerProperties.class, DrainProperties.class})
 public class RoomRuntimeConfig {
 
 	@Bean(name = "roomRunnerExecutor", destroyMethod = "shutdown")

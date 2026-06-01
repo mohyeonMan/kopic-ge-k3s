@@ -3,7 +3,7 @@ package io.jhpark.kopic.ge.room.registry;
 import io.jhpark.kopic.ge.common.config.KopicRedisProperties;
 import io.jhpark.kopic.ge.common.redis.RedisService;
 import io.jhpark.kopic.ge.common.runtime.GeRuntimeState;
-import jakarta.annotation.PreDestroy;
+import java.util.concurrent.atomic.AtomicBoolean;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -17,6 +17,7 @@ public class GeStateRecorder {
 	private final RedisService redisService;
 	private final KopicRedisProperties redisProperties;
 	private final GeRuntimeState runtimeState;
+	private final AtomicBoolean recording = new AtomicBoolean(true);
 
 	@Scheduled(
 		fixedDelayString = "${kopic.redis.heartbeat-interval:10s}",
@@ -54,26 +55,14 @@ public class GeStateRecorder {
 		});
 	}
 
-	@PreDestroy
-	public void markDraining() {
-		if (!redisProperties.enabled()) {
-			return;
-		}
-		try {
-			runtimeState.enterDrain();
-			redisService.set(
-				redisProperties.geKey(geId()),
-				runtimeState.statusValue(),
-				redisProperties.heartbeatTtl()
-			);
-			redisService.zRemove(redisProperties.keys().geLoad(), geId());
-			log.info("ge marked as draining. geId={}", geId());
-		} catch (RuntimeException runtimeException) {
-			log.debug("ge draining marker skipped. geId={}, error={}", geId(), runtimeException.getMessage());
-		}
+	public void stopRecording() {
+		recording.set(false);
 	}
 
 	private void runStatusUpdate(String action, Runnable update) {
+		if (!recording.get()) {
+			return;
+		}
 		if (!redisProperties.enabled()) {
 			return;
 		}

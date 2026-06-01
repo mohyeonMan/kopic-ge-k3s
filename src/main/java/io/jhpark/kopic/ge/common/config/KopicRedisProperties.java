@@ -24,7 +24,7 @@ public record KopicRedisProperties(
 		reconciliationInterval = normalize(reconciliationInterval, Duration.ofHours(1));
 		initialDelay = initialDelay == null || initialDelay.isNegative() ? Duration.ZERO : initialDelay;
 		roomWeight = roomWeight <= 0 ? 2.0 : roomWeight;
-		keys = keys == null ? new Keys(null, null, null, null) : keys;
+		keys = keys == null ? new Keys(null, null, null, null, null) : keys;
 	}
 
 	public String geKey(String geId) {
@@ -33,6 +33,10 @@ public record KopicRedisProperties(
 
 	public String roomCodeKey(String roomCode) {
 		return keys.roomCodePrefix() + roomCode;
+	}
+
+	public String quickGeRoomsKey(String geId) {
+		return keys.quickGePrefix() + geId + ":rooms";
 	}
 
 	private static String normalize(String value, String defaultValue) {
@@ -47,6 +51,7 @@ public record KopicRedisProperties(
 		String gePrefix,
 		String geLoad,
 		String quickAvailable,
+		String quickGePrefix,
 		String roomCodePrefix
 	) {
 
@@ -54,6 +59,7 @@ public record KopicRedisProperties(
 			gePrefix = normalize(gePrefix, "ge:");
 			geLoad = normalize(geLoad, "ge:load");
 			quickAvailable = normalize(quickAvailable, "quick:available");
+			quickGePrefix = normalize(quickGePrefix, "quick:ge:");
 			roomCodePrefix = normalize(roomCodePrefix, "roomcode:");
 		}
 	}

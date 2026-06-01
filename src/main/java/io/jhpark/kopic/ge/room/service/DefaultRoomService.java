@@ -1,5 +1,6 @@
 package io.jhpark.kopic.ge.room.service;
 
+import io.jhpark.kopic.ge.common.config.DrainProperties;
 import io.jhpark.kopic.ge.common.error.ErrorCode;
 import io.jhpark.kopic.ge.common.runtime.GeRuntimeState;
 import io.jhpark.kopic.ge.room.dto.Room;
@@ -23,6 +24,7 @@ public class DefaultRoomService implements RoomService {
 	private final RoomSessionStore sessionStore;
 	private final DefaultQuickRoomCandidateStore quickRoomCandidates;
 	private final GeRuntimeState runtimeState;
+	private final DrainProperties drainProperties;
 	private final RoomRunner roomRunner;
 	private final RoomJobFactory roomJobFactory;
 
@@ -90,6 +92,12 @@ public class DefaultRoomService implements RoomService {
 
 	@Override
 	public RoomSubmitResult createPrivateRoom(String sessionId, String nickname, String wsNodeId) {
+		if (!runtimeState.isActive()) {
+			return RoomSubmitResult.rejected(
+				ErrorCode.FORBIDDEN,
+				"서버 종료 준비 중이라 새 방을 생성할 수 없습니다."
+			);
+		}
 		Room room;
 		try {
 			room = bootstrapRoom(Room.PRIVATE_ROOM_TYPE, sessionId);
@@ -135,6 +143,12 @@ public class DefaultRoomService implements RoomService {
 
 	@Override
 	public RoomSubmitResult quickJoin(String sessionId, String nickname, String wsNodeId) {
+		if (!runtimeState.isActive()) {
+			return RoomSubmitResult.rejected(
+				ErrorCode.FORBIDDEN,
+				"서버 종료 준비 중이라 빠른 입장을 할 수 없습니다."
+			);
+		}
 		Optional<String> candidateRoomId = quickRoomCandidates.findFirstAvailableRoomId();
 		String roomId;
 		if (candidateRoomId.isPresent()) {
@@ -195,6 +209,31 @@ public class DefaultRoomService implements RoomService {
 	@Override
 	public RoomSubmitResult startGame(String roomId, String sessionId) {
 		return submit(roomId, roomJobFactory.startGame(sessionId));	
+	}
+
+	@Override
+	public int startDrain() {
+		int submittedCount = 0;
+		for (String roomId : sessionStore.roomIds()) {
+			if (submit(roomId, roomJobFactory.startDrain(drainProperties.waitingRoomDeleteDelay()))
+				instanceof RoomSubmitResult.Accepted) {
+				submittedCount += 1;
+			}
+		}
+		log.info("drain jobs submitted. roomCount={}", submittedCount);
+		return submittedCount;
+	}
+
+	@Override
+	public int forceCloseAll(String message) {
+		int submittedCount = 0;
+		for (String roomId : sessionStore.roomIds()) {
+			if (submit(roomId, roomJobFactory.forceClose(message)) instanceof RoomSubmitResult.Accepted) {
+				submittedCount += 1;
+			}
+		}
+		log.info("force close jobs submitted. roomCount={}", submittedCount);
+		return submittedCount;
 	}
 
 }

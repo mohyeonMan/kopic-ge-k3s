@@ -1,9 +1,12 @@
 package io.jhpark.kopic.ge.common.lifecycle;
 
-import io.jhpark.kopic.ge.common.config.KopicRedisProperties;
-import io.jhpark.kopic.ge.common.redis.RedisService;
+import io.jhpark.kopic.ge.common.config.DrainProperties;
 import io.jhpark.kopic.ge.common.runtime.GeRuntimeState;
+import io.jhpark.kopic.ge.room.registry.DefaultQuickRoomCandidateStore;
+import io.jhpark.kopic.ge.room.registry.GeStateRecorder;
+import io.jhpark.kopic.ge.room.service.RoomService;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.concurrent.atomic.AtomicBoolean;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -15,11 +18,14 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class GeDrainService implements SmartLifecycle {
 
-	private static final Duration DRAIN_TEST_WAIT = Duration.ofSeconds(10);
+	private static final Duration FORCE_CLOSE_WAIT = Duration.ofSeconds(10);
+	private static final Duration FORCE_CLOSE_POLL_INTERVAL = Duration.ofSeconds(1);
 
-	private final RedisService redisService;
-	private final KopicRedisProperties redisProperties;
 	private final GeRuntimeState runtimeState;
+	private final DrainProperties drainProperties;
+	private final GeStateRecorder stateRecorder;
+	private final DefaultQuickRoomCandidateStore quickRoomCandidates;
+	private final RoomService roomService;
 	private final AtomicBoolean running = new AtomicBoolean(false);
 
 	@Override
@@ -36,10 +42,25 @@ public class GeDrainService implements SmartLifecycle {
 			boolean transitioned = runtimeState.enterDrain();
 			log.info("ge drain lifecycle entered drain. geId={}, transitioned={}, status={}",
 				runtimeState.geId(), transitioned, runtimeState.statusValue());
-			publishDrainState();
-			waitForDrainTest();
+			stateRecorder.heartbeat();
+			stateRecorder.reportLoad();
+			quickRoomCandidates.clearCurrentGeCandidates();
+			int submittedCount = roomService.startDrain();
+			log.info("ge drain room jobs submitted. geId={}, submittedCount={}, roomCount={}",
+				runtimeState.geId(), submittedCount, runtimeState.roomCount());
+			boolean drained = waitForRoomsToDrain(drainProperties.timeout(), drainProperties.pollInterval());
+			if (!drained) {
+				log.warn("ge drain timeout reached. geId={}, roomCount={}",
+					runtimeState.geId(), runtimeState.roomCount());
+				int forceCloseSubmittedCount = roomService.forceCloseAll("서버 종료 시간이 도달하여 로비로 이동합니다.");
+				log.warn("ge drain force close submitted. geId={}, submittedCount={}",
+					runtimeState.geId(), forceCloseSubmittedCount);
+				waitForRoomsToDrain(FORCE_CLOSE_WAIT, FORCE_CLOSE_POLL_INTERVAL);
+			}
+			stateRecorder.stopRecording();
 			running.set(false);
-			log.info("ge drain lifecycle stop completed. phase={}, geId={}", getPhase(), runtimeState.geId());
+			log.info("ge drain lifecycle stop completed. phase={}, geId={}, roomCount={}",
+				getPhase(), runtimeState.geId(), runtimeState.roomCount());
 		} finally {
 			callback.run();
 		}
@@ -66,35 +87,41 @@ public class GeDrainService implements SmartLifecycle {
 		return true;
 	}
 
-	private void publishDrainState() {
-		if (!redisProperties.enabled()) {
-			log.info("ge drain registry update skipped. geId={}, reason=redis-disabled", runtimeState.geId());
-			return;
+	private boolean waitForRoomsToDrain(Duration timeout, Duration pollInterval) {
+		Instant deadline = Instant.now().plus(timeout);
+		while (runtimeState.roomCount() > 0) {
+			Instant now = Instant.now();
+			if (!now.isBefore(deadline)) {
+				return runtimeState.roomCount() == 0;
+			}
+			Duration remaining = Duration.between(now, deadline);
+			log.info("ge drain waiting. geId={}, roomCount={}, remainingSeconds={}",
+				runtimeState.geId(), runtimeState.roomCount(), remaining.toSeconds());
+			if (!sleep(min(pollInterval, remaining))) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	private boolean sleep(Duration duration) {
+		if (duration == null || duration.isZero() || duration.isNegative()) {
+			return true;
 		}
 		try {
-			redisService.set(
-				redisProperties.geKey(runtimeState.geId()),
-				runtimeState.statusValue(),
-				redisProperties.heartbeatTtl()
-			);
-			redisService.zRemove(redisProperties.keys().geLoad(), runtimeState.geId());
-			log.info("ge drain registry updated. geId={}, status={}", runtimeState.geId(), runtimeState.statusValue());
-		} catch (RuntimeException runtimeException) {
-			log.warn("ge drain registry update failed. geId={}, error={}",
-				runtimeState.geId(), runtimeException.getMessage());
-			log.debug("ge drain registry update failure detail. geId={}", runtimeState.geId(), runtimeException);
+			Thread.sleep(duration.toMillis());
+			return true;
+		} catch (InterruptedException interruptedException) {
+			Thread.currentThread().interrupt();
+			log.warn("ge drain wait interrupted. geId={}", runtimeState.geId());
+			return false;
 		}
 	}
 
-	private void waitForDrainTest() {
-		log.info("ge drain lifecycle waiting before callback. geId={}, duration={}",
-			runtimeState.geId(), DRAIN_TEST_WAIT);
-		try {
-			Thread.sleep(DRAIN_TEST_WAIT.toMillis());
-		} catch (InterruptedException interruptedException) {
-			Thread.currentThread().interrupt();
-			log.warn("ge drain lifecycle wait interrupted. geId={}", runtimeState.geId());
+	private Duration min(Duration first, Duration second) {
+		if (first.compareTo(second) <= 0) {
+			return first;
 		}
-		log.info("ge drain lifecycle wait completed. geId={}", runtimeState.geId());
+		return second;
 	}
 }

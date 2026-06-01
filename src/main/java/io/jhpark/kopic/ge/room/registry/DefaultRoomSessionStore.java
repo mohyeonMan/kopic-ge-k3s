@@ -64,6 +64,11 @@ public class DefaultRoomSessionStore implements RoomSessionStore {
 	}
 
 	@Override
+	public List<String> roomIds() {
+		return List.copyOf(sessions.keySet());
+	}
+
+	@Override
 	public int countActiveRoomsByType(int roomType) {
 		int count = 0;
 		for (RoomSession session : sessions.values()) {

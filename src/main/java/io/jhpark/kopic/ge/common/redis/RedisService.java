@@ -28,6 +28,18 @@ public class RedisService {
 		return redisTemplate.delete(key);
 	}
 
+	public Long sAdd(String key, String member) {
+		return redisTemplate.opsForSet().add(key, member);
+	}
+
+	public Long sRemove(String key, String member) {
+		return redisTemplate.opsForSet().remove(key, member);
+	}
+
+	public Set<String> sMembers(String key) {
+		return redisTemplate.opsForSet().members(key);
+	}
+
 	public Boolean zAdd(String key, String member, double score) {
 		return redisTemplate.opsForZSet().add(key, member, score);
 	}

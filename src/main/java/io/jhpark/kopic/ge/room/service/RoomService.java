@@ -30,4 +30,8 @@ public interface RoomService {
 	RoomSubmitResult startGame(String roomId, String sessionId);
 
 	RoomSubmitResult updateSetting(String roomId, String sessionId, JsonNode settingPayload);
+
+	int startDrain();
+
+	int forceCloseAll(String message);
 }
