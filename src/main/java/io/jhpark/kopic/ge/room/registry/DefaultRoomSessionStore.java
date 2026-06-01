@@ -1,5 +1,6 @@
 package io.jhpark.kopic.ge.room.registry;
 
+import io.jhpark.kopic.ge.common.runtime.GeRuntimeState;
 import io.jhpark.kopic.ge.room.dto.Room;
 import io.jhpark.kopic.ge.room.dto.RoomSession;
 import java.util.ArrayList;
@@ -19,7 +20,7 @@ public class DefaultRoomSessionStore implements RoomSessionStore {
 
 	private final Map<String, RoomSession> sessions = new ConcurrentHashMap<>();
 	private final DefaultPrivateRoomCodeStore privateRoomCodes;
-	private final GeStateRecorder geStateRecorder;
+	private final GeRuntimeState runtimeState;
 
 	@Override
 	public Optional<RoomSession> find(String roomId) {
@@ -93,7 +94,10 @@ public class DefaultRoomSessionStore implements RoomSessionStore {
 	public void reconcileDirectory() {
 		List<Room> rooms = snapshotRooms();
 		privateRoomCodes.refresh(rooms);
-		geStateRecorder.reconcile(rooms.size(), countParticipants(rooms));
+		int participantCount = countParticipants(rooms);
+		runtimeState.reconcile(rooms.size(), participantCount);
+		log.debug("ge runtime state reconciled. roomCount={}, participantCount={}",
+			rooms.size(), participantCount);
 	}
 
 	private List<Room> snapshotRooms() {

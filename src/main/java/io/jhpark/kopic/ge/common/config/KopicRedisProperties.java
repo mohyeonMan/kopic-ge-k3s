@@ -6,7 +6,6 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 @ConfigurationProperties(prefix = "kopic.redis")
 public record KopicRedisProperties(
 	boolean enabled,
-	String status,
 	Duration heartbeatTtl,
 	Duration roomCodeTtl,
 	Duration heartbeatInterval,
@@ -18,7 +17,6 @@ public record KopicRedisProperties(
 ) {
 
 	public KopicRedisProperties {
-		status = normalize(status, "ACTIVE");
 		heartbeatTtl = heartbeatTtl == null ? Duration.ofSeconds(15) : heartbeatTtl;
 		roomCodeTtl = roomCodeTtl == null ? Duration.ofHours(6) : roomCodeTtl;
 		heartbeatInterval = normalize(heartbeatInterval, Duration.ofSeconds(10));

@@ -1,8 +1,8 @@
 package io.jhpark.kopic.ge.room.registry;
 
 import io.jhpark.kopic.ge.common.config.KopicRedisProperties;
-import io.jhpark.kopic.ge.common.config.NodeProperties;
 import io.jhpark.kopic.ge.common.redis.RedisService;
+import io.jhpark.kopic.ge.common.runtime.GeRuntimeState;
 import io.jhpark.kopic.ge.room.dto.Room;
 import io.jhpark.kopic.ge.room.dto.RoomSession;
 import jakarta.annotation.PreDestroy;
@@ -25,8 +25,6 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public final class DefaultQuickRoomCandidateStore {
 
-	private static final String ACTIVE = "ACTIVE";
-
 	private static final Comparator<QuickRoomRef> QUICK_ROOM_ORDER =
 		Comparator.comparing(QuickRoomRef::availableAt);
 
@@ -36,9 +34,12 @@ public final class DefaultQuickRoomCandidateStore {
 	private final RoomSessionStore sessionStore;
 	private final RedisService redisService;
 	private final KopicRedisProperties redisProperties;
-	private final NodeProperties nodeProperties;
+	private final GeRuntimeState runtimeState;
 
 	public Optional<String> findFirstAvailableRoomId() {
+		if (!runtimeState.isActive()) {
+			return Optional.empty();
+		}
 		synchronized (lock) {
 			Iterator<QuickRoomRef> iterator = quickRoomIds.iterator();
 			while (iterator.hasNext()) {
@@ -73,6 +74,9 @@ public final class DefaultQuickRoomCandidateStore {
 	}
 
 	public void add(String roomId) {
+		if (!runtimeState.isActive()) {
+			return;
+		}
 		if (isBlank(roomId)) {
 			return;
 		}
@@ -297,7 +301,7 @@ public final class DefaultQuickRoomCandidateStore {
 	}
 
 	private boolean isActive() {
-		return ACTIVE.equalsIgnoreCase(redisProperties.status());
+		return runtimeState.isActive();
 	}
 
 	private String quickMember(String roomId) {
@@ -305,7 +309,7 @@ public final class DefaultQuickRoomCandidateStore {
 	}
 
 	private String geId() {
-		return nodeProperties.nodeId();
+		return runtimeState.geId();
 	}
 
 	private boolean hasCapacity(Room room) {

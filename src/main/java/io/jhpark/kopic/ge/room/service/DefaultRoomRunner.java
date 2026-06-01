@@ -2,10 +2,10 @@ package io.jhpark.kopic.ge.room.service;
 
 import io.jhpark.kopic.ge.common.error.ErrorCode;
 import io.jhpark.kopic.ge.common.metrics.GeMetrics;
+import io.jhpark.kopic.ge.common.runtime.GeRuntimeState;
 import io.jhpark.kopic.ge.room.dto.Room;
 import io.jhpark.kopic.ge.room.dto.RoomSession;
 import io.jhpark.kopic.ge.room.registry.DefaultQuickRoomCandidateStore;
-import io.jhpark.kopic.ge.room.registry.GeStateRecorder;
 import io.jhpark.kopic.ge.room.registry.RoomSessionStore;
 import java.time.Instant;
 import java.util.concurrent.Executor;
@@ -24,7 +24,7 @@ public final class DefaultRoomRunner implements RoomRunner {
 	private final ScheduledExecutorService scheduler;
 	private final GeMetrics geMetrics;
 	private final DefaultQuickRoomCandidateStore quickRoomCandidates;
-	private final GeStateRecorder geStateRecorder;
+	private final GeRuntimeState runtimeState;
 
 	public DefaultRoomRunner(
 		RoomSessionStore sessionStore,
@@ -32,14 +32,14 @@ public final class DefaultRoomRunner implements RoomRunner {
 		@Qualifier("roomRunnerScheduler") ScheduledExecutorService scheduler,
 		GeMetrics geMetrics,
 		DefaultQuickRoomCandidateStore quickRoomCandidates,
-		GeStateRecorder geStateRecorder
+		GeRuntimeState runtimeState
 	) {
 		this.sessionStore = sessionStore;
 		this.executor = executor;
 		this.scheduler = scheduler;
 		this.geMetrics = geMetrics;
 		this.quickRoomCandidates = quickRoomCandidates;
-		this.geStateRecorder = geStateRecorder;
+		this.runtimeState = runtimeState;
 	}
 
 	@Override
@@ -236,7 +236,7 @@ public final class DefaultRoomRunner implements RoomRunner {
 		log.debug("closing room actor requested. roomId={}, participantCount={}", roomId, participantCount);
 		boolean removed = sessionStore.remove(roomId, session);
 		if (removed) {
-			geStateRecorder.recordRoomClosed();
+			runtimeState.recordRoomClosed();
 		}
 		if (removed && session.getRoom().getRoomType() == Room.QUICK_ROOM_TYPE) {
 			quickRoomCandidates.remove(roomId);

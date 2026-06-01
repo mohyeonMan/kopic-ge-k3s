@@ -1,10 +1,10 @@
 package io.jhpark.kopic.ge.room.service;
 
 import io.jhpark.kopic.ge.common.error.ErrorCode;
+import io.jhpark.kopic.ge.common.runtime.GeRuntimeState;
 import io.jhpark.kopic.ge.room.dto.Room;
 import io.jhpark.kopic.ge.room.dto.RoomSession;
 import io.jhpark.kopic.ge.room.registry.DefaultQuickRoomCandidateStore;
-import io.jhpark.kopic.ge.room.registry.GeStateRecorder;
 import io.jhpark.kopic.ge.room.registry.RoomSessionStore;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
@@ -22,7 +22,7 @@ public class DefaultRoomService implements RoomService {
 
 	private final RoomSessionStore sessionStore;
 	private final DefaultQuickRoomCandidateStore quickRoomCandidates;
-	private final GeStateRecorder geStateRecorder;
+	private final GeRuntimeState runtimeState;
 	private final RoomRunner roomRunner;
 	private final RoomJobFactory roomJobFactory;
 
@@ -67,7 +67,7 @@ public class DefaultRoomService implements RoomService {
 
 	private Room putRoom(Room room) {
 		sessionStore.put(new RoomSession(room));
-		geStateRecorder.recordRoomCreated();
+		runtimeState.recordRoomCreated();
 		if (room.getRoomType() == Room.QUICK_ROOM_TYPE) {
 			quickRoomCandidates.add(room.getRoomId());
 		}

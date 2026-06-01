@@ -1,5 +1,6 @@
 package io.jhpark.kopic.ge.common.config;
 
+import io.jhpark.kopic.ge.common.runtime.GeRuntimeState;
 import org.springframework.amqp.core.Binding;
 import org.springframework.amqp.core.BindingBuilder;
 import org.springframework.amqp.core.Queue;
@@ -15,7 +16,7 @@ import org.springframework.context.annotation.Configuration;
 
 @Configuration
 @EnableRabbit
-@EnableConfigurationProperties({ RabbitProperties.class, NodeProperties.class })
+@EnableConfigurationProperties(RabbitProperties.class)
 public class RabbitConfig {
 
 	@Bean
@@ -26,10 +27,10 @@ public class RabbitConfig {
 	@Bean
 	public Queue rabbitNodeQueue(
 		RabbitProperties rabbitProperties,
-		NodeProperties nodeProperties
+		GeRuntimeState runtimeState
 	) {
 		return QueueBuilder
-			.nonDurable(rabbitProperties.queueName(nodeProperties.nodeId()))
+			.nonDurable(rabbitProperties.queueName(runtimeState.geId()))
 			.autoDelete()
 			.build();
 	}
@@ -38,12 +39,12 @@ public class RabbitConfig {
 	public Binding engineEventBinding(
 		Queue rabbitNodeQueue,
 		RabbitProperties rabbitProperties,
-		NodeProperties nodeProperties,
+		GeRuntimeState runtimeState,
 		TopicExchange engineOutboundExchange
 	) {
 		return BindingBuilder.bind(rabbitNodeQueue)
 			.to(engineOutboundExchange)
-			.with(rabbitProperties.routingKey(nodeProperties.nodeId()));
+			.with(rabbitProperties.routingKey(runtimeState.geId()));
 	}
 
 	// @Bean

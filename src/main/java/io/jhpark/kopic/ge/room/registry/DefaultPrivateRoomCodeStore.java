@@ -1,8 +1,8 @@
 package io.jhpark.kopic.ge.room.registry;
 
 import io.jhpark.kopic.ge.common.config.KopicRedisProperties;
-import io.jhpark.kopic.ge.common.config.NodeProperties;
 import io.jhpark.kopic.ge.common.redis.RedisService;
+import io.jhpark.kopic.ge.common.runtime.GeRuntimeState;
 import io.jhpark.kopic.ge.room.dto.Room;
 import java.util.List;
 import java.util.Map;
@@ -22,7 +22,7 @@ public final class DefaultPrivateRoomCodeStore {
 	private final Map<String, String> roomIdToRoomCode = new ConcurrentHashMap<>();
 	private final RedisService redisService;
 	private final KopicRedisProperties redisProperties;
-	private final NodeProperties nodeProperties;
+	private final GeRuntimeState runtimeState;
 
 	Optional<String> findRoomId(String roomCode, Predicate<String> roomExists) {
 		if (roomCode == null || roomCode.isBlank()) {
@@ -185,7 +185,7 @@ public final class DefaultPrivateRoomCodeStore {
 	}
 
 	private String geId() {
-		return nodeProperties.nodeId();
+		return runtimeState.geId();
 	}
 
 	private boolean isBlank(String value) {

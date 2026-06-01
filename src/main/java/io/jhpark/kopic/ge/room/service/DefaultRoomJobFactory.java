@@ -4,6 +4,7 @@ import io.jhpark.kopic.ge.common.config.GameTimerProperties;
 import io.jhpark.kopic.ge.common.dto.KopicEnvelope;
 import io.jhpark.kopic.ge.common.error.ErrorCode;
 import io.jhpark.kopic.ge.common.metrics.GeMetrics;
+import io.jhpark.kopic.ge.common.runtime.GeRuntimeState;
 import io.jhpark.kopic.ge.common.util.CommonMapper;
 import io.jhpark.kopic.ge.common.util.TimeFormatUtil;
 import io.jhpark.kopic.ge.outbound.dto.GeEvent;
@@ -18,7 +19,6 @@ import io.jhpark.kopic.ge.room.dto.WordEntry;
 import io.jhpark.kopic.ge.room.dto.Game.GamePhase;
 import io.jhpark.kopic.ge.room.dto.Game.RoundPhase;
 import io.jhpark.kopic.ge.room.dto.Game.TurnPhase;
-import io.jhpark.kopic.ge.room.registry.GeStateRecorder;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import java.time.Duration;
@@ -67,7 +67,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	private final WordPoolProvider wordPoolProvider;
 	private final GameTimerProperties gameTimerProperties;
 	private final GeMetrics geMetrics;
-	private final GeStateRecorder geStateRecorder;
+	private final GeRuntimeState runtimeState;
 
 	/**
 	 * 참가자 입장 요청을 처리한다.
@@ -110,7 +110,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 
 					// 방 상태에 참가자를 반영한 뒤, 입장자 본인에게 최신 스냅샷을 전달한다.
 					participants.put(sessionId, newParticipant);
-					geStateRecorder.recordParticipantJoined();
+					runtimeState.recordParticipantJoined();
 					sendToParticipant(newParticipant, 304, Map.of(
 						"sid", sessionId,
 						"rid", room.getRoomId(),
@@ -187,7 +187,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 						room.getRoomId(), sessionId);
 					return RoomJob.FollowUpResult.none();
 				}
-				geStateRecorder.recordParticipantLeft();
+				runtimeState.recordParticipantLeft();
 				log.info("participant removed from room. roomId={}, sessionId={}, beforeCount={}, afterCount={}",
 					room.getRoomId(), sessionId, beforeSize, participants.size());
 
