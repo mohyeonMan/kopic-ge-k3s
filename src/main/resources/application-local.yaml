@@ -10,3 +10,12 @@ spring:
     port: 5672
     username: kopic
     password: kopic123
+
+management:
+  endpoint:
+    shutdown:
+      enabled: true
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus,shutdown

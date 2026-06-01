@@ -66,7 +66,7 @@ GE DRAIN의 목적은 다음이다.
 GE DRAIN 진입 시 반드시 수행해야 하는 작업은 다음이다.
 
 ```text
-1. ge:{geId}.status = DRAIN 으로 갱신
+1. ge:{geId} = DRAIN 으로 갱신
 2. ge:{geId} heartbeat TTL 계속 갱신
 3. ge:load에서 자기 geId 제거
 4. quick:available에서 자기 geId 후보 즉시 제거
@@ -344,6 +344,8 @@ score = joinedAvailableAt
 DRAIN 중에는 quick join이 금지되므로, GE는 자기 후보를 즉시 제거해야 한다.
 
 특정 geId 후보를 빠르게 제거하기 위해 보조 인덱스를 둔다.
+현재 코드는 아직 이 보조 인덱스를 반영하지 않았고, `quick:available` prefix scan으로 제거한다.
+최종 구현에서는 아래 보조 SET 기반 제거 방식으로 교체한다.
 
 ```text
 quick:ge:{geId}:rooms
@@ -393,7 +395,7 @@ lobby는 다음 정책을 따른다.
 ```text
 새 private room 생성
 - ge:load 조회
-- ge:{geId}.status 확인
+- ge:{geId} 값 확인
 - ACTIVE GE만 후보로 사용
 - DRAIN GE는 제외
 
@@ -590,6 +592,53 @@ GE DRAIN 진입
 - 새 방 생성/quick 계열 요청은 거부
 ```
 
+구현은 `@PreDestroy`에 의존하지 않는다.
+`@PreDestroy`는 Redis/Rabbit lifecycle stop 이후에 실행될 수 있으므로, Redis 상태 갱신이나 Rabbit을 통한 정리 작업의 시작점으로 쓰면 안 된다.
+
+GE 종료 순서는 Spring `SmartLifecycle` phase로 제어한다.
+
+```text
+높은 phase가 먼저 stop 된다.
+
+GeDrainService
+- phase = 100000
+- SIGTERM/shutdown 시 가장 먼저 DRAIN 전환
+- GeRuntimeState ACTIVE -> DRAIN
+- ge:{geId} = DRAIN 기록
+- ge:load에서 자기 geId 제거
+- drain 완료 조건을 기다린 뒤 callback 호출
+
+Rabbit listener container
+- phase = 0
+- GeDrainService callback 이후 stop
+- drain 중에는 consumer 유지
+```
+
+관련 설정은 다음을 기준으로 둔다.
+
+```yaml
+server:
+  shutdown: graceful
+
+spring:
+  lifecycle:
+    timeout-per-shutdown-phase: ${KOPIC_SHUTDOWN_PHASE_TIMEOUT:70m}
+```
+
+현재 구현 확인 단계에서는 `GeDrainService.stop()` 안에서 10초 대기를 넣어 phase 순서를 검증한다.
+최종 구현에서는 이 대기를 실제 drain 완료 조건으로 교체한다.
+
+```text
+검증된 순서
+
+1. GeDrainService stop 시작
+2. Redis에 DRAIN 기록
+3. drain 대기
+4. GeDrainService callback 호출
+5. Rabbit listener stop 시작
+6. Redis/Rabbit connection 종료
+```
+
 room 종료 시:
 
 ```text
@@ -740,24 +789,25 @@ graceful period 만료가 가까워졌거나 초과했을 때 보내는 이벤�
 ### GE
 
 ```text
-1. SIGTERM 수신 즉시 DRAIN 전환
-2. ge:{geId}=DRAIN 으로 갱신
-3. DRAIN 중 heartbeat 유지
-4. ge:load에서 자기 geId 제거
-5. quick:available에서 자기 후보 즉시 제거
-6. quick:ge:{geId}:rooms 보조 인덱스로 빠르게 제거
+1. SIGTERM/shutdown 수신 시 GeDrainService(SmartLifecycle phase=100000)가 먼저 실행
+2. GeRuntimeState를 ACTIVE -> DRAIN으로 전환
+3. ge:{geId}=DRAIN 으로 갱신
+4. DRAIN 중 heartbeat 유지
+5. ge:load에서 자기 geId 제거
+6. quick:ge:{geId}:rooms 보조 인덱스로 quick:available의 자기 후보 즉시 제거
 7. 새 private room 생성 차단
 8. 새 quick room 생성 차단
 9. quick join 차단
 10. 기존 private roomCode 입장 허용
-11. IN_GAME room에는 SERVER_DRAIN_NOTICE 발송
-12. 게임 종료 로직에서 geStatus == DRAIN 재확인
-13. WAITING/READY/IDLE room은 5분 후 삭제 스케줄 등록
-14. DRAIN 상태 대기방에서는 새 게임 시작 차단
-15. EMPTY room은 즉시 삭제
-16. activeRoomCount == 0 이면 즉시 프로세스 정상 종료
-17. graceful period 만료 시 남은 room 강제 종료
-18. 종료 직전 Redis / RabbitMQ / roomCode 정리
+11. Rabbit listener는 GeDrainService callback 이후 종료되도록 낮은 phase 유지
+12. IN_GAME room에는 SERVER_DRAIN_NOTICE 발송
+13. 게임 종료 로직에서 geStatus == DRAIN 재확인
+14. WAITING/READY/IDLE room은 5분 후 삭제 스케줄 등록
+15. DRAIN 상태 대기방에서는 새 게임 시작 차단
+16. EMPTY room은 즉시 삭제
+17. activeRoomCount == 0 이면 즉시 프로세스 정상 종료
+18. graceful period 만료 시 남은 room 강제 종료
+19. Redis/Rabbit 의존 작업은 @PreDestroy가 아니라 drain phase에서 먼저 수행
 ```
 
 ### WS

@@ -1,6 +1,11 @@
+server:
+  shutdown: graceful
+
 spring:
   application:
     name: kopic-ge
+  lifecycle:
+    timeout-per-shutdown-phase: ${KOPIC_SHUTDOWN_PHASE_TIMEOUT:70m}
   profiles:
     default: local
   data:

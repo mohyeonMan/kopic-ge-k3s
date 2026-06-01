@@ -1,5 +1,6 @@
 package io.jhpark.kopic.ge.common.config;
 
+import io.jhpark.kopic.ge.common.lifecycle.LifecyclePhases;
 import io.jhpark.kopic.ge.common.runtime.GeRuntimeState;
 import org.springframework.amqp.core.Binding;
 import org.springframework.amqp.core.BindingBuilder;
@@ -63,6 +64,7 @@ public class RabbitConfig {
 	public SimpleRabbitListenerContainerFactory rabbitListenerContainerFactory(ConnectionFactory connectionFactory) {
 		SimpleRabbitListenerContainerFactory factory = new SimpleRabbitListenerContainerFactory();
 		factory.setConnectionFactory(connectionFactory);
+		factory.setPhase(LifecyclePhases.RABBIT_LISTENER);
 		// factory.setMessageConverter(rabbitJsonMessageConverter);
 		return factory;
 	}

@@ -156,7 +156,7 @@ public final class DefaultQuickRoomCandidateStore {
 		}
 	}
 
-	@PreDestroy
+	// @PreDestroy
 	public void clearQuickAvailabilityOnShutdown() {
 		if (!redisProperties.enabled()) {
 			return;
