@@ -63,19 +63,14 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	private static final String DRAIN_WAITING_ROOM_TIMER_KEY = DRAIN_TIMER_KEY_PREFIX + "waiting-room";
 	private static final String RETURN_TO_LOBBY_REASON_RESULT_END = "RESULT_END";
 	private static final String RETURN_TO_LOBBY_REASON_NOT_ENOUGH_PARTICIPANTS = "NOT_ENOUGH_PARTICIPANTS";
-	private static final String SERVER_DRAIN_NOTICE_TYPE = "SERVER_DRAIN_NOTICE";
-	private static final String ROOM_DRAIN_DELETE_SCHEDULED_TYPE = "ROOM_DRAIN_DELETE_SCHEDULED";
-	private static final String SERVER_DRAIN_FINAL_TYPE = "SERVER_DRAIN_FINAL";
-	private static final String SERVER_DRAIN_FORCE_CLOSE_TYPE = "SERVER_DRAIN_FORCE_CLOSE";
-	private static final int ROOM_NOTICE_EVENT_CODE = 450;
-	private static final int ROOM_DRAIN_DELETE_SCHEDULED_EVENT_CODE = 451;
-	private static final int SERVER_DRAIN_FINAL_EVENT_CODE = 452;
-	private static final int SERVER_DRAIN_FORCE_CLOSE_EVENT_CODE = 453;
-	private static final String IN_GAME_DRAIN_NOTICE_MESSAGE = "이번 게임 이후 방이 종료될 예정입니다.";
-	private static final String GAME_ENDED_DRAIN_CLOSE_MESSAGE = "게임이 종료되어 로비로 이동합니다.";
-	private static final String WAITING_ROOM_DRAIN_CLOSE_MESSAGE = "로비로 이동합니다.";
 	private static final int MIN_COLOR_INDEX = 1;
 	private static final int MAX_COLOR_INDEX = 20;
+
+	private enum RoomCloseReason {
+		DRAIN_GAME_ENDED,
+		DRAIN_WAITING_ROOM,
+		DRAIN_FORCE_CLOSE;
+	}
 
 	private final CommonMapper commonMapper;
 	private final GeEventPublisher geEventPublisher;
@@ -373,18 +368,8 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	public RoomJob notify(String message) {
 		return new RoomJob(
 			room -> {
-				broadcastToRoom(room, ROOM_NOTICE_EVENT_CODE, Map.of("msg", message == null ? "" : message));
+				broadcastNotification(room, message);
 				return RoomJob.FollowUpResult.none();
-			}
-		);
-	}
-
-	@Override
-	public RoomJob drainAfterNotify(String message, Duration delay, RoomJob nextJob, String timerKey) {
-		return new RoomJob(
-			room -> {
-				broadcastDrainNotice(room, ROOM_DRAIN_DELETE_SCHEDULED_TYPE, message, delay);
-				return RoomJob.FollowUpResult.followUp(nextJob, delay, timerKey);
 			}
 		);
 	}
@@ -397,35 +382,18 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 					return RoomJob.FollowUpResult.none();
 				}
 				Game game = room.getGame();
-				if (game != null && game.isPlaying()) {
-					return RoomJob.FollowUpResult.followUp(inGameDrainNotify(), null, null);
-				}
-				if (game != null && game.isGameResult()) {
-					return RoomJob.FollowUpResult.followUp(
-						closeWithDrainFinalNotice(GAME_ENDED_DRAIN_CLOSE_MESSAGE),
-						null,
-						null
-					);
+				if (game != null) {
+					return RoomJob.FollowUpResult.followUp(inGameCloseNotifyInterval(), null, null);
 				}
 				if (room.getParticipants().isEmpty()) {
-					return RoomJob.FollowUpResult.followUp(forceClose(WAITING_ROOM_DRAIN_CLOSE_MESSAGE), null, null);
+					return RoomJob.FollowUpResult.requestClose();
 				}
-				return RoomJob.FollowUpResult.followUp(waitingRoomDrainCountdown(waitingRoomDeleteDelay), null, null);
+				return RoomJob.FollowUpResult.followUp(closeAfterCountdown(waitingRoomDeleteDelay), null, null);
 			}
 		);
 	}
 
-	@Override
-	public RoomJob forceClose(String message) {
-		return new RoomJob(
-			room -> {
-				broadcastDrainNotice(room, SERVER_DRAIN_FORCE_CLOSE_TYPE, message, null);
-				return RoomJob.FollowUpResult.requestClose();
-			}
-		);
-	}
-
-	private RoomJob inGameDrainNotify() {
+	private RoomJob inGameCloseNotifyInterval() {
 		return new RoomJob(
 			room -> {
 				if (!runtimeState.isDraining()) {
@@ -433,18 +401,14 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 				}
 				Game game = room.getGame();
 				if (game == null) {
-					return RoomJob.FollowUpResult.followUp(
-						closeWithDrainFinalNotice(GAME_ENDED_DRAIN_CLOSE_MESSAGE),
-						null,
-						null
-					);
+					return RoomJob.FollowUpResult.none();
 				}
 				if (game.isGameResult()) {
 					return RoomJob.FollowUpResult.none();
 				}
-				broadcastDrainNotice(room, SERVER_DRAIN_NOTICE_TYPE, IN_GAME_DRAIN_NOTICE_MESSAGE, null);
+				broadcastNotification(room, "이 방은 게임종료 후 삭제됩니다.");
 				return RoomJob.FollowUpResult.followUp(
-					inGameDrainNotify(),
+					inGameCloseNotifyInterval(),
 					drainProperties.inGameNotifyInterval(),
 					DRAIN_IN_GAME_NOTIFY_TIMER_KEY
 				);
@@ -452,28 +416,36 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 		);
 	}
 
-	private RoomJob waitingRoomDrainCountdown(Duration remaining) {
-		Duration normalizedRemaining = normalizeDrainDelay(remaining);
-		if (normalizedRemaining.isZero()) {
-			return forceClose(WAITING_ROOM_DRAIN_CLOSE_MESSAGE);
-		}
-		Duration nextDelay = nextWaitingRoomDrainDelay(normalizedRemaining);
-		Duration nextRemaining = normalizedRemaining.minus(nextDelay);
-		RoomJob nextJob = nextRemaining.isZero()
-			? forceClose(WAITING_ROOM_DRAIN_CLOSE_MESSAGE)
-			: waitingRoomDrainCountdown(nextRemaining);
-		return drainAfterNotify(
-			waitingRoomDeleteMessage(normalizedRemaining),
-			nextDelay,
-			nextJob,
-			DRAIN_WAITING_ROOM_TIMER_KEY
+	private RoomJob closeAfterCountdown(Duration remaining) {
+		return new RoomJob(
+			room -> {
+				Duration normalizedRemaining = normalizeDrainDelay(remaining);
+				if (normalizedRemaining.isZero()) {
+					return RoomJob.FollowUpResult.followUp(
+						closeWithNotice("로비로 이동합니다.", RoomCloseReason.DRAIN_WAITING_ROOM),
+						null,
+						null
+					);
+				}
+
+				Duration nextDelay = nextWaitingRoomDrainDelay(normalizedRemaining);
+				Duration nextRemaining = normalizedRemaining.minus(nextDelay);
+				broadcastNotification(room, waitingRoomDeleteMessage(normalizedRemaining));
+				return RoomJob.FollowUpResult.followUp(
+					nextRemaining.isZero()
+						? closeWithNotice("로비로 이동합니다.", RoomCloseReason.DRAIN_WAITING_ROOM)
+						: closeAfterCountdown(nextRemaining),
+					nextDelay,
+					DRAIN_WAITING_ROOM_TIMER_KEY
+				);
+			}
 		);
 	}
 
-	private RoomJob closeWithDrainFinalNotice(String message) {
+	private RoomJob closeWithNotice(String message, RoomCloseReason reason) {
 		return new RoomJob(
 			room -> {
-				broadcastDrainNotice(room, SERVER_DRAIN_FINAL_TYPE, message, null);
+				broadcastRoomClosed(room, reason, message);
 				return RoomJob.FollowUpResult.requestClose();
 			}
 		);
@@ -507,7 +479,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 							"서버 종료 준비 중이라 새 게임을 시작할 수 없습니다."
 						);
 					}
-					broadcastDrainNotice(room, ROOM_DRAIN_DELETE_SCHEDULED_TYPE, "서버 종료 준비 중이라 새 게임을 시작할 수 없습니다.", null);
+					broadcastNotification(room, "서버 종료 준비 중이라 새 게임을 시작할 수 없습니다.");
 					return RoomJob.FollowUpResult.none();
 				}
 
@@ -1145,7 +1117,10 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 				);
 				if (runtimeState.isDraining()) {
 					return RoomJob.FollowUpResult.followUp(
-						closeWithDrainFinalNotice(GAME_ENDED_DRAIN_CLOSE_MESSAGE),
+						closeWithNotice(
+							"로비로 이동합니다.",
+							RoomCloseReason.DRAIN_GAME_ENDED
+						),
 						null,
 						null
 					);
@@ -1904,14 +1879,16 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 	}
 
 	private Duration nextWaitingRoomDrainDelay(Duration remaining) {
-		long seconds = Math.max(0, remaining.toSeconds());
-		if (seconds > 60) {
-			return Duration.ofSeconds(Math.min(60, seconds - 60));
+		if (remaining.compareTo(Duration.ofSeconds(1)) <= 0) {
+			return remaining;
 		}
-		if (seconds > 10) {
-			return Duration.ofSeconds(seconds - 10);
+		if (remaining.compareTo(Duration.ofSeconds(10)) <= 0) {
+			return Duration.ofSeconds(1);
 		}
-		return Duration.ofSeconds(seconds);
+		if (remaining.compareTo(Duration.ofSeconds(70)) <= 0) {
+			return remaining.minus(Duration.ofSeconds(10));
+		}
+		return Duration.ofSeconds(60);
 	}
 
 	private String waitingRoomDeleteMessage(Duration remaining) {
@@ -2038,31 +2015,21 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 		}
 	}
 
-	private void broadcastDrainNotice(Room room, String type, String message, Duration delay) {
+	private void broadcastNotification(Room room, String text) {
 		if (room == null || room.getParticipants().isEmpty()) {
 			return;
 		}
-		Map<String, Object> payload = new LinkedHashMap<>();
-		payload.put("type", type);
-		payload.put("rid", room.getRoomId());
-		payload.put("msg", message == null ? "" : message);
-		if (delay != null && !delay.isNegative() && !delay.isZero()) {
-			payload.put("sec", delay.toSeconds());
-		}
-		broadcastToRoom(room, drainEventCode(type), payload);
+		broadcastToRoom(room, 450, Map.of("t", text == null ? "" : text));
 	}
 
-	private int drainEventCode(String type) {
-		if (ROOM_DRAIN_DELETE_SCHEDULED_TYPE.equals(type)) {
-			return ROOM_DRAIN_DELETE_SCHEDULED_EVENT_CODE;
+	private void broadcastRoomClosed(Room room, RoomCloseReason reason, String text) {
+		if (room == null || room.getParticipants().isEmpty()) {
+			return;
 		}
-		if (SERVER_DRAIN_FINAL_TYPE.equals(type)) {
-			return SERVER_DRAIN_FINAL_EVENT_CODE;
-		}
-		if (SERVER_DRAIN_FORCE_CLOSE_TYPE.equals(type)) {
-			return SERVER_DRAIN_FORCE_CLOSE_EVENT_CODE;
-		}
-		return ROOM_NOTICE_EVENT_CODE;
+		broadcastToRoom(room, 451, Map.of(
+			"r", reason == null ? "" : reason.name(),
+			"t", text == null ? "" : text
+		));
 	}
 
 	private void broadcastToRoom(Room room, int eventCode, Object payload) {
@@ -2196,6 +2163,11 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 				return RoomJob.FollowUpResult.none();
 			}
 		);
+	}
+
+	@Override
+	public RoomJob closeWithNotice(String message) {
+		return closeWithNotice(message, RoomCloseReason.DRAIN_FORCE_CLOSE);
 	}
 
 	

@@ -228,7 +228,7 @@ public class DefaultRoomService implements RoomService {
 	public int forceCloseAll(String message) {
 		int submittedCount = 0;
 		for (String roomId : sessionStore.roomIds()) {
-			if (submit(roomId, roomJobFactory.forceClose(message)) instanceof RoomSubmitResult.Accepted) {
+			if (submit(roomId, roomJobFactory.closeWithNotice(message)) instanceof RoomSubmitResult.Accepted) {
 				submittedCount += 1;
 			}
 		}

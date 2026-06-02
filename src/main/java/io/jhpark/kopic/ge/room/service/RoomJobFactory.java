@@ -22,9 +22,7 @@ public interface RoomJobFactory {
 
 	RoomJob notify(String message);
 
-	RoomJob drainAfterNotify(String message, Duration delay, RoomJob nextJob, String timerKey);
-
 	RoomJob startDrain(Duration waitingRoomDeleteDelay);
 
-	RoomJob forceClose(String message);
+	RoomJob closeWithNotice(String message);
 }
