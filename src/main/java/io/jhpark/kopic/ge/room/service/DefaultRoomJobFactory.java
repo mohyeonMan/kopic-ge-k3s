@@ -338,9 +338,19 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 						returnToLobbyReason,
 						false
 					);
+					if (runtimeState.isDraining()) {
+						followUp = new RoomJob.FollowUp(
+							closeWithNotice(
+								"로비로 이동합니다.",
+								RoomCloseReason.DRAIN_GAME_ENDED
+							),
+							null,
+							null
+						);
+					}
 				}
 
-				RoomJob.FollowUpAction followUpAction = wasFull
+				RoomJob.FollowUpAction followUpAction = wasFull && !runtimeState.isDraining()
 					? RoomJob.FollowUpAction.ADD_QUICK_JOIN_CANDIDATE
 					: RoomJob.FollowUpAction.NONE;
 				return new RoomJob.FollowUpResult(followUp, cancelTimerKey, followUpAction);
