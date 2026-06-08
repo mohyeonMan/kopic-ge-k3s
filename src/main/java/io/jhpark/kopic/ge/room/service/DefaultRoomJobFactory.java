@@ -1201,7 +1201,8 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 
 	/**
 	 * 드로잉 스트로크 입력을 처리한다.
-	 * clear 명령(코드 3)이면 캔버스를 비우고, 일반 스트로크면 캔버스 상태에 누적한다.
+	 * clear 명령(코드 3)과 일반 스트로크는 캔버스 이벤트 로그에 누적한다.
+	 * undo 명령(코드 4)이면 같은 cid 이벤트를 제거한다.
 	 * 발신자를 제외한 참가자에게만 드로잉 이벤트(405)를 브로드캐스트한다.
 	 */
 	@Override
@@ -1221,12 +1222,20 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 
 				// 스트로크를 캔버스에 반영하고 송신자를 제외한 참가자에게 전달한다.
 				if (stroke != null && stroke.isArray()) {
-					boolean clearCanvas = stroke.size() > 0
+					boolean undoCanvas = stroke.size() > 3
 						&& stroke.get(0).canConvertToInt()
-						&& stroke.get(0).asInt() == 3;
+						&& stroke.get(0).asInt() == 4
+						&& stroke.get(3).isTextual();
 
-					if (clearCanvas) {
-						room.getCurrentCanvas().clear();
+					if (undoCanvas) {
+						String cid = stroke.get(3).asText();
+						room.getCurrentCanvas().removeIf(canvasStroke ->
+							canvasStroke != null
+								&& canvasStroke.isArray()
+								&& canvasStroke.size() > 3
+								&& canvasStroke.get(3).isTextual()
+								&& cid.equals(canvasStroke.get(3).asText())
+						);
 					} else {
 						room.getCurrentCanvas().add(stroke);
 					}
