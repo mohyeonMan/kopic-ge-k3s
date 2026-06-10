@@ -1403,8 +1403,19 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 			"tid", game.getCurTurnId(),
 			"sid", sessionId
 		);
+
+		Map<String, Object> correctPayload = Map.of(
+			"gid", game.getGameId(),
+			"tid", game.getCurTurnId(),
+			"sid", sessionId,
+			"ae", game.getAnswerWordEntry()
+		);
+
 		for (Participant participant : room.getParticipants().values()) {
-			sendToParticipant(participant, 408, payload);
+			if(participant.sessionId().equals(sessionId)) 
+				sendToParticipant(participant, 408, correctPayload);
+			else
+				sendToParticipant(participant, 408, payload);
 		}
 	}
 
