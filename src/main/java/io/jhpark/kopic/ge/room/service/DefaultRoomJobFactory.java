@@ -1408,7 +1408,7 @@ public class DefaultRoomJobFactory implements RoomJobFactory {
 			"gid", game.getGameId(),
 			"tid", game.getCurTurnId(),
 			"sid", sessionId,
-			"ae", game.getAnswerWordEntry()
+			"ae", answerEntryPayload(game.getAnswerWordEntry())
 		);
 
 		for (Participant participant : room.getParticipants().values()) {
