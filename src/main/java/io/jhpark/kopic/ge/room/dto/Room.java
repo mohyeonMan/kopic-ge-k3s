@@ -32,6 +32,7 @@ public final class Room {
 	private final Map<String, Participant> participants = new ConcurrentHashMap<>();
 	private final Instant createdAt;
 	private final List<JsonNode> currentCanvas = new ArrayList<>();
+	private final List<List<JsonNode>> canvasRedoStack = new ArrayList<>();
 
 	public Room(int roomType, String hostSessionId) {
 		this.roomId = newRoomId();
@@ -76,5 +77,65 @@ public final class Room {
 
 	public void clearAutoRestartAt() {
 		this.autoRestartAt = null;
+	}
+
+	public void appendCanvasEvent(JsonNode stroke) {
+		canvasRedoStack.clear();
+		currentCanvas.add(stroke);
+	}
+
+	public boolean undoCanvas(String cid) {
+		List<JsonNode> removedStrokes = new ArrayList<>();
+		boolean removingTargetCid = false;
+
+		for (int index = currentCanvas.size() - 1; index >= 0; index--) {
+			JsonNode canvasStroke = currentCanvas.get(index);
+			boolean matchesTargetCid = hasCanvasCid(canvasStroke, cid);
+
+			if (!matchesTargetCid) {
+				if (removingTargetCid) {
+					break;
+				}
+				continue;
+			}
+
+			removingTargetCid = true;
+			removedStrokes.add(0, currentCanvas.remove(index));
+		}
+
+		if (removedStrokes.isEmpty()) {
+			return false;
+		}
+
+		canvasRedoStack.add(removedStrokes);
+		return true;
+	}
+
+	public boolean redoCanvas(String cid) {
+		if (canvasRedoStack.isEmpty()) {
+			return false;
+		}
+
+		List<JsonNode> redoGroup = canvasRedoStack.get(canvasRedoStack.size() - 1);
+		if (redoGroup.isEmpty() || !hasCanvasCid(redoGroup.get(0), cid)) {
+			return false;
+		}
+
+		canvasRedoStack.remove(canvasRedoStack.size() - 1);
+		currentCanvas.addAll(redoGroup);
+		return true;
+	}
+
+	public void clearCanvasHistory() {
+		currentCanvas.clear();
+		canvasRedoStack.clear();
+	}
+
+	private boolean hasCanvasCid(JsonNode stroke, String cid) {
+		return stroke != null
+			&& stroke.isArray()
+			&& stroke.size() > 3
+			&& stroke.get(3).isTextual()
+			&& cid.equals(stroke.get(3).asText());
 	}
 }

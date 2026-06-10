@@ -55,7 +55,7 @@ kopic:
     game-result: ${KOPIC_GAME_TIMER_GAME_RESULT:10s}
     quick-restart: ${KOPIC_GAME_TIMER_QUICK_RESTART:5s}
   rabbit:
-    outbound-exchange: ${KOPIC_RABBIT_OUTBOUND_EXCHANGE:kopic.ws.exchange}
+    outbound-exchange: ${KOPIC_RABBIT_OUTBOUND_EXCHANGE:kopic.exchange}
     inbound-queue-prefix: ${KOPIC_RABBIT_INBOUND_QUEUE_PREFIX:kopic.ge.event.}
     inbound-routing-key-prefix: ${KOPIC_RABBIT_INBOUND_ROUTING_KEY_PREFIX:kopic.ge.route.}
     outbound-routing-key-prefix: ${KOPIC_RABBIT_OUTBOUND_ROUTING_KEY_PREFIX:kopic.ws.route.}

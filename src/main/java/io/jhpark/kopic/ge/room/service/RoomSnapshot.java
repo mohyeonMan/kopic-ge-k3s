@@ -22,6 +22,7 @@ public record RoomSnapshot(
 	@JsonProperty("pc") int participantCount,
 	@JsonProperty("ps") Map<String, ParticipantSnapshot> participants,
 	@JsonProperty("cv") List<JsonNode> currentCanvas,
+	@JsonProperty("cr") List<List<JsonNode>> canvasRedoStack,
 	@JsonProperty("g") GameSnapshot game,
 	@JsonProperty("now") Long serverNowMs,
 	@JsonProperty("dl") Long deadlineAtMs
@@ -30,6 +31,9 @@ public record RoomSnapshot(
 	public static RoomSnapshot from(Room room) {
 		Map<String, ParticipantSnapshot> copiedParticipants = snapshotParticipants(room.getParticipants());
 		List<JsonNode> copiedCanvas = List.copyOf(room.getCurrentCanvas());
+		List<List<JsonNode>> copiedRedoStack = room.getCanvasRedoStack().stream()
+			.map(List::copyOf)
+			.toList();
 		Instant deadlineAt = resolveDeadlineAt(room);
 		Long serverNowMs = null;
 		Long deadlineAtMs = null;
@@ -45,6 +49,7 @@ public record RoomSnapshot(
 			copiedParticipants.size(),
 			copiedParticipants,
 			copiedCanvas,
+			copiedRedoStack,
 			GameSnapshot.from(room),
 			serverNowMs,
 			deadlineAtMs
